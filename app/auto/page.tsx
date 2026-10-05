@@ -93,7 +93,7 @@ export default function AutoPage() {
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-violet-300/20 bg-violet-300/[0.06] px-3 py-1 text-[10px] font-semibold uppercase tracking-[.17em] text-violet-200"><Car size={13} /> Player · CLOUVA Auto</div>
               <h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-6xl">MI GARAGE</h1>
-              <p className="mt-3 max-w-xl text-sm leading-6 text-white/48">Tu auto real y su gemelo digital. Revisalo, aprendé cada sistema y registrá cada arreglo.</p>
+              <p className="mt-3 max-w-xl text-sm leading-6 text-white/48">Tu auto real y su gemelo digital. Tunealo, armá builds, hacelo reaccionar a tu música y seguí cada revisión o arreglo desde el mismo lugar.</p>
             </div>
             <button type="button" onClick={() => setShowCreate(true)} className="hidden items-center gap-2 rounded-xl bg-violet-500 px-4 py-3 text-sm font-semibold sm:inline-flex"><Plus size={16} /> Agregar auto</button>
           </div>
@@ -106,7 +106,7 @@ export default function AutoPage() {
           <section className="mt-6 rounded-[28px] border border-white/[0.08] bg-[#0b0912] p-7 text-center sm:p-12">
             <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl border border-violet-300/15 bg-violet-300/[0.06] text-violet-300"><Car size={30} /></div>
             <h2 className="mt-5 text-2xl font-semibold">Agregá tu primer auto</h2>
-            <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-white/42">CLOUVA empieza con la identidad del vehículo y después lo vas completando con estados, fotos, reparaciones y su representación 3D.</p>
+            <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-white/42">CLOUVA empieza con la identidad del vehículo y después lo completás con fotos, 3D, piezas, builds de tuning, escenas musicales y su historial real.</p>
             <button type="button" onClick={() => setShowCreate(true)} className="mt-6 inline-flex items-center gap-2 rounded-xl bg-violet-500 px-5 py-3 text-sm font-semibold"><Plus size={16} /> Crear gemelo digital</button>
           </section>
         ) : null}

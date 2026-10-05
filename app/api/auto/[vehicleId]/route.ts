@@ -7,6 +7,7 @@ import {
   asText,
   requireVehicleAccess,
 } from "@/lib/auto/server";
+import { normalizeVehicleShow, normalizeVehicleTuning } from "@/lib/auto/visual-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,8 +17,39 @@ const PRIORITIES = new Set(["low", "normal", "high", "critical"]);
 const REPAIR_CATEGORIES = new Set(["critical", "function", "maintenance", "aesthetic", "upgrade"]);
 const REPAIR_STATUSES = new Set(["planned", "in_progress", "completed", "cancelled"]);
 
+async function resolvePlayerAudio(
+  admin: ReturnType<typeof createAdminSupabase>,
+  rows: Array<Record<string, unknown>>,
+) {
+  return Promise.all(rows.map(async (row) => {
+    let url = (row.public_url as string | null) || (row.source_url as string | null) || null;
+    if (!url && typeof row.storage_path === "string" && row.storage_path) {
+      const signed = await admin.storage.from("vehicle-media").createSignedUrl(row.storage_path, 3600);
+      url = signed.data?.signedUrl ?? null;
+    }
+    return {
+      id: String(row.id),
+      caption: typeof row.caption === "string" ? row.caption : null,
+      resolved_url: url,
+      created_at: typeof row.created_at === "string" ? row.created_at : new Date(0).toISOString(),
+    };
+  }));
+}
+
 async function loadDetail(admin: ReturnType<typeof createAdminSupabase>, vehicleId: string, playerId: string) {
-  const [vehicleResult, systemsResult, partsResult, statesResult, inspectionsResult, repairsResult, eventsResult, bindingsResult, mediaLinksResult] = await Promise.all([
+  const [
+    vehicleResult,
+    systemsResult,
+    partsResult,
+    statesResult,
+    inspectionsResult,
+    repairsResult,
+    eventsResult,
+    bindingsResult,
+    mediaLinksResult,
+    buildsResult,
+    audioResult,
+  ] = await Promise.all([
     admin.from("vehicles").select("*").eq("id", vehicleId).single(),
     admin.from("vehicle_system_catalog").select("*").order("sort_order"),
     admin.from("vehicle_part_catalog").select("*").order("sort_order"),
@@ -27,8 +59,22 @@ async function loadDetail(admin: ReturnType<typeof createAdminSupabase>, vehicle
     admin.from("vehicle_events").select("*").eq("vehicle_id", vehicleId).order("occurred_at", { ascending: false }).limit(100),
     admin.from("vehicle_3d_bindings").select("*").eq("vehicle_id", vehicleId).eq("is_active", true).maybeSingle(),
     admin.from("vehicle_media_links").select("*").eq("vehicle_id", vehicleId).order("created_at", { ascending: false }).limit(100),
+    admin.from("vehicle_builds").select("*").eq("vehicle_id", vehicleId).order("is_active", { ascending: false }).order("updated_at", { ascending: false }).limit(40),
+    admin.from("player_media").select("id,caption,public_url,source_url,storage_path,created_at").eq("player_id", playerId).eq("media_type", "audio").order("created_at", { ascending: false }).limit(80),
   ]);
-  for (const result of [vehicleResult, systemsResult, partsResult, statesResult, inspectionsResult, repairsResult, eventsResult, bindingsResult, mediaLinksResult]) {
+  for (const result of [
+    vehicleResult,
+    systemsResult,
+    partsResult,
+    statesResult,
+    inspectionsResult,
+    repairsResult,
+    eventsResult,
+    bindingsResult,
+    mediaLinksResult,
+    buildsResult,
+    audioResult,
+  ]) {
     if (result.error) throw new Error(result.error.message);
   }
 
@@ -58,6 +104,7 @@ async function loadDetail(admin: ReturnType<typeof createAdminSupabase>, vehicle
     }
   }
   const media = (mediaLinksResult.data ?? []).map((link) => ({ ...link, media: mediaById.get(link.player_media_id) ?? null }));
+  const audioLibrary = await resolvePlayerAudio(admin, (audioResult.data ?? []) as Array<Record<string, unknown>>);
 
   const repairs = repairsResult.data ?? [];
   const costs = repairs.reduce(
@@ -84,6 +131,8 @@ async function loadDetail(admin: ReturnType<typeof createAdminSupabase>, vehicle
     events: eventsResult.data ?? [],
     media,
     model3d: bindingsResult.data ? { binding: bindingsResult.data, asset } : null,
+    builds: buildsResult.data ?? [],
+    audioLibrary,
     costs,
   };
 }
@@ -232,6 +281,74 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ v
         metadata: { category, status, part_catalog_id: partCatalogId },
       });
       return NextResponse.json({ repair });
+    }
+
+    if (action === "visual_build") {
+      const buildId = asNullableText(body.buildId, 80);
+      const name = asText(body.name, 80) || "Build";
+      const tuningConfig = normalizeVehicleTuning(body.tuningConfig);
+      const showConfig = normalizeVehicleShow(body.showConfig);
+      const audioMediaId = asNullableText(body.audioMediaId, 80);
+      const activate = body.activate !== false;
+
+      if (audioMediaId) {
+        const { data: track, error: trackError } = await admin
+          .from("player_media")
+          .select("id")
+          .eq("id", audioMediaId)
+          .eq("player_id", access.player.id)
+          .eq("media_type", "audio")
+          .maybeSingle();
+        if (trackError) throw new Error(trackError.message);
+        if (!track) return NextResponse.json({ error: "Ese audio no pertenece al Player del vehículo." }, { status: 400 });
+      }
+
+      let existing: { id: string; is_active: boolean } | null = null;
+      if (buildId) {
+        const { data, error } = await admin.from("vehicle_builds").select("id,is_active").eq("id", buildId).eq("vehicle_id", vehicleId).maybeSingle();
+        if (error) throw new Error(error.message);
+        if (!data) return NextResponse.json({ error: "Build no encontrado." }, { status: 404 });
+        existing = data;
+      }
+
+      let build: Record<string, unknown>;
+      if (existing) {
+        const { data, error } = await admin.from("vehicle_builds").update({
+          name,
+          tuning_config: tuningConfig,
+          show_config: showConfig,
+          audio_media_id: audioMediaId,
+        }).eq("id", existing.id).eq("vehicle_id", vehicleId).select("*").single();
+        if (error) throw new Error(error.message);
+        build = data;
+      } else {
+        const { data, error } = await admin.from("vehicle_builds").insert({
+          vehicle_id: vehicleId,
+          name,
+          is_active: false,
+          tuning_config: tuningConfig,
+          show_config: showConfig,
+          audio_media_id: audioMediaId,
+        }).select("*").single();
+        if (error) throw new Error(error.message);
+        build = data;
+      }
+
+      if (activate) {
+        const { error: deactivateError } = await admin.from("vehicle_builds").update({ is_active: false }).eq("vehicle_id", vehicleId).neq("id", String(build.id));
+        if (deactivateError) throw new Error(deactivateError.message);
+        const { data: activeBuild, error: activateError } = await admin.from("vehicle_builds").update({ is_active: true }).eq("id", String(build.id)).eq("vehicle_id", vehicleId).select("*").single();
+        if (activateError) throw new Error(activateError.message);
+        build = activeBuild;
+      }
+
+      await admin.from("vehicle_events").insert({
+        vehicle_id: vehicleId,
+        event_type: "visual_build_saved",
+        title: `Build visual guardado: ${name}`,
+        metadata: { build_id: build.id, audio_media_id: audioMediaId, scene: showConfig.scene },
+      });
+      return NextResponse.json({ build });
     }
 
     if (action === "vehicle") {

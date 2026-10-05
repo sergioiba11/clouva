@@ -11,6 +11,8 @@ import {
   Gauge,
   History,
   Loader2,
+  Music2,
+  Palette,
   Search,
   ShieldAlert,
   Sparkles,
@@ -25,7 +27,15 @@ import { useAuth } from "@/components/auth-provider";
 import { useClouvaAIAssistant } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
 import { MainNav } from "@/components/layout";
 import { VehicleModelViewer } from "@/components/auto/VehicleModelViewer";
+import { VehicleTuningStudio, type VehicleVisualBuild } from "@/components/auto/VehicleTuningStudio";
+import { VehicleShowStudio, type VehicleAudioTrack } from "@/components/auto/VehicleShowStudio";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import {
+  normalizeVehicleShow,
+  normalizeVehicleTuning,
+  type VehicleShowConfig,
+  type VehicleTuningConfig,
+} from "@/lib/auto/visual-config";
 
 type Vehicle = {
   id: string;
@@ -99,11 +109,13 @@ type Payload = {
   events: EventItem[];
   media: MediaItem[];
   model3d: Model3d;
+  builds: VehicleVisualBuild[];
+  audioLibrary: VehicleAudioTrack[];
   costs: { parts: number; labor: number; total: number; pending: number };
 };
 type Status = "good" | "review" | "repair" | "replace" | "missing" | "in_progress" | "solved";
 type Priority = "low" | "normal" | "high" | "critical";
-type Tab = "garage" | "inspect" | "repair" | "history";
+type Tab = "garage" | "tuning" | "show" | "inspect" | "repair" | "history";
 
 type InspectionDraft = Record<string, { result: "good" | "review"; observations: string }>;
 
@@ -143,6 +155,7 @@ export default function VehiclePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("garage");
   const [systemId, setSystemId] = useState<string | null>(null);
@@ -216,6 +229,13 @@ export default function VehiclePage() {
       });
   }, [data, partById]);
 
+  const activeVisualBuild = useMemo(
+    () => data?.builds?.find((build) => build.is_active) ?? data?.builds?.[0] ?? null,
+    [data?.builds],
+  );
+  const activeTuning = useMemo(() => normalizeVehicleTuning(activeVisualBuild?.tuning_config), [activeVisualBuild]);
+  const activeShow = useMemo(() => normalizeVehicleShow(activeVisualBuild?.show_config), [activeVisualBuild]);
+
   useEffect(() => {
     if (!data) return;
     return registerContext({
@@ -230,10 +250,17 @@ export default function VehiclePage() {
         progress: totalProgress,
         selectedPart: selectedPart ? { id: selectedPart.id, key: selectedPart.key, name: selectedPart.name, status: selectedState?.status ?? "review", notes: selectedState?.notes ?? null } : null,
         repairPlan: repairPlan.slice(0, 12).map(({ part, state }) => ({ part: part.name, status: state.status, priority: state.priority })),
+        activeVisualBuild: activeVisualBuild ? {
+          id: activeVisualBuild.id,
+          name: activeVisualBuild.name,
+          bodyColor: activeTuning.bodyColor,
+          scene: activeShow.scene,
+          audioMediaId: activeVisualBuild.audio_media_id,
+        } : null,
         costs: data.costs,
       },
     });
-  }, [data, registerContext, repairPlan, selectedPart, selectedState, totalProgress]);
+  }, [activeShow.scene, activeTuning.bodyColor, activeVisualBuild, data, registerContext, repairPlan, selectedPart, selectedState, totalProgress]);
 
   function selectPartByKey(key: string) {
     const part = data?.parts.find((candidate) => candidate.key === key);
@@ -343,6 +370,59 @@ export default function VehiclePage() {
     }
   }
 
+  async function saveVisualBuild(input: {
+    buildId?: string | null;
+    name: string;
+    tuningConfig: VehicleTuningConfig;
+    showConfig: VehicleShowConfig;
+    audioMediaId?: string | null;
+    activate?: boolean;
+  }) {
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await authenticatedFetch(`/api/auto/${vehicleId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          action: "visual_build",
+          buildId: input.buildId,
+          name: input.name,
+          tuningConfig: input.tuningConfig,
+          showConfig: input.showConfig,
+          audioMediaId: input.audioMediaId ?? null,
+          activate: input.activate ?? true,
+        }),
+      });
+      await readApiJson(response);
+      await load();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "No se pudo guardar el build visual.";
+      setError(message);
+      throw cause;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function uploadShowAudio(file: File): Promise<VehicleAudioTrack> {
+    setUploadingAudio(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      const response = await authenticatedFetch(`/api/auto/${vehicleId}/show-audio`, { method: "POST", body: form });
+      const payload = await readApiJson<{ track: VehicleAudioTrack }>(response);
+      await load();
+      return payload.track;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "No se pudo subir el audio.";
+      setError(message);
+      throw cause;
+    } finally {
+      setUploadingAudio(false);
+    }
+  }
+
   if (loading || !data) {
     return <main className="grid min-h-screen place-items-center bg-[#05040a] text-white">{error ? <div className="max-w-md p-6 text-center"><p className="text-rose-200">{error}</p><Link href="/auto" className="mt-4 inline-block text-violet-300">Volver a Mi Garage</Link></div> : <Loader2 className="animate-spin text-violet-300" />}</main>;
   }
@@ -369,6 +449,8 @@ export default function VehiclePage() {
                 partMeshMap={data.model3d?.binding.part_mesh_map}
                 selectedPartKey={selectedPart?.key}
                 onSelectPart={selectPartByKey}
+                tuningConfig={activeTuning}
+                showConfig={activeShow}
               />
               <div className="pointer-events-none absolute left-4 top-4 rounded-2xl border border-white/10 bg-black/55 px-3 py-2 backdrop-blur-md"><p className="text-[9px] uppercase tracking-[.16em] text-white/35">Gemelo digital</p><p className="mt-0.5 text-xs font-semibold">Nivel {data.model3d?.binding.representation_level ?? 1}{data.model3d?.asset ? ` · ${data.model3d.asset.name}` : " · representación genérica"}</p></div>
               <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex items-end justify-between"><div className="rounded-2xl border border-white/10 bg-black/60 px-3 py-2 backdrop-blur"><p className="text-[9px] uppercase tracking-[.16em] text-white/35">Reconstrucción</p><p className="text-2xl font-semibold">{totalProgress}%</p></div><p className="max-w-[155px] rounded-2xl bg-black/55 px-3 py-2 text-right text-[10px] leading-4 text-white/45 backdrop-blur">Giralo y tocá las partes disponibles.</p></div>
@@ -397,6 +479,31 @@ export default function VehiclePage() {
               {data.media.length ? <div className="mt-4 flex gap-2 overflow-x-auto pb-1">{data.media.map((item) => item.media?.resolved_url ? <img key={item.id} src={item.media.resolved_url} alt={item.media.caption || "Foto del vehículo"} className="h-24 w-28 shrink-0 rounded-xl object-cover" /> : null)}</div> : <div className="mt-4 grid h-20 place-items-center rounded-2xl border border-dashed border-white/10 text-xs text-white/25">Todavía no cargaste fotos.</div>}
             </section>
           </>
+        ) : null}
+
+        {tab === "tuning" ? (
+          <VehicleTuningStudio
+            vehicleName={vehicleTitle}
+            modelUrl={data.model3d?.asset?.model_url}
+            partMeshMap={data.model3d?.binding.part_mesh_map}
+            builds={data.builds}
+            saving={saving}
+            onSave={saveVisualBuild}
+          />
+        ) : null}
+
+        {tab === "show" ? (
+          <VehicleShowStudio
+            vehicleName={vehicleTitle}
+            modelUrl={data.model3d?.asset?.model_url}
+            partMeshMap={data.model3d?.binding.part_mesh_map}
+            builds={data.builds}
+            audioLibrary={data.audioLibrary}
+            saving={saving}
+            uploading={uploadingAudio}
+            onSave={saveVisualBuild}
+            onUploadAudio={uploadShowAudio}
+          />
         ) : null}
 
         {tab === "inspect" ? (
@@ -432,13 +539,15 @@ export default function VehiclePage() {
         ) : null}
       </div>
 
-      <nav className="fixed bottom-3 left-1/2 z-40 flex w-[calc(100%-24px)] max-w-xl -translate-x-1/2 items-center justify-around rounded-[22px] border border-white/10 bg-[#0c0912]/95 p-1.5 shadow-2xl backdrop-blur-xl">
+      <nav className="fixed bottom-3 left-1/2 z-40 flex w-[calc(100%-24px)] max-w-3xl -translate-x-1/2 items-center justify-start gap-1 overflow-x-auto rounded-[22px] border border-white/10 bg-[#0c0912]/95 p-1.5 shadow-2xl backdrop-blur-xl [scrollbar-width:none] sm:justify-around">
         {([
           ["garage", Car, "Auto"],
+          ["tuning", Palette, "Tuning"],
+          ["show", Music2, "Show"],
           ["inspect", Stethoscope, "Revisar"],
           ["repair", Wrench, "Arreglar"],
           ["history", History, "Historial"],
-        ] as const).map(([key, Icon, label]) => <button key={key} type="button" onClick={() => setTab(key)} className={`flex min-w-[70px] flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[10px] ${tab === key ? "bg-violet-400/15 text-violet-200" : "text-white/38"}`}><Icon size={17} /><span>{label}</span></button>)}
+        ] as const).map(([key, Icon, label]) => <button key={key} type="button" onClick={() => setTab(key)} className={`flex min-w-[68px] shrink-0 flex-col items-center gap-1 rounded-2xl px-2.5 py-2 text-[10px] ${tab === key ? "bg-violet-400/15 text-violet-200" : "text-white/38"}`}><Icon size={17} /><span>{label}</span></button>)}
       </nav>
 
       {selectedPart ? (
