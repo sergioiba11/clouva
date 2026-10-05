@@ -61,7 +61,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ veh
       if (!match) return NextResponse.json({ error: "Ruta 3D inválida." }, { status: 500 });
       const [, bucket, object] = match;
       const [buffer] = await gcs.bucket(bucket).file(object).download();
-      return new NextResponse(buffer, {
+      const body = new ArrayBuffer(buffer.byteLength);
+      new Uint8Array(body).set(buffer);
+      return new NextResponse(body, {
         headers: {
           "Content-Type": "model/gltf-binary",
           "Cache-Control": "private, max-age=300",
