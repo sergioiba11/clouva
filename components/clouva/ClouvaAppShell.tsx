@@ -19,6 +19,7 @@ const LIGHTWEIGHT_PREFIXES = [
   "/onboarding/player-basics",
   "/iglu",
   "/eliglurecords",
+  "/lopez",
   "/lamatrix/estudios/eliglurecords",
   "/studios/el-iglu/radio",
 ] as const;
