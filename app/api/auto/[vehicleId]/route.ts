@@ -1,3 +1,4 @@
+import { Storage } from "@google-cloud/storage";
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 import {
@@ -16,6 +17,25 @@ const PART_STATUSES = new Set(["good", "review", "repair", "replace", "missing",
 const PRIORITIES = new Set(["low", "normal", "high", "critical"]);
 const REPAIR_CATEGORIES = new Set(["critical", "function", "maintenance", "aesthetic", "upgrade"]);
 const REPAIR_STATUSES = new Set(["planned", "in_progress", "completed", "cancelled"]);
+const gcs = new Storage();
+
+async function resolveVehicleAssetUrl(
+  admin: ReturnType<typeof createAdminSupabase>,
+  storagePath: string,
+) {
+  if (storagePath.startsWith("gs://")) {
+    const match = storagePath.match(/^gs:\/\/([^/]+)\/(.+)$/);
+    if (!match) return null;
+    const [, bucket, object] = match;
+    const [url] = await gcs.bucket(bucket).file(object).getSignedUrl({
+      action: "read",
+      expires: Date.now() + 60 * 60 * 1000,
+    });
+    return url;
+  }
+  const signed = await admin.storage.from("vehicle-media").createSignedUrl(storagePath, 3600);
+  return signed.data?.signedUrl ?? null;
+}
 
 async function resolvePlayerAudio(
   admin: ReturnType<typeof createAdminSupabase>,
@@ -87,8 +107,8 @@ async function loadDetail(admin: ReturnType<typeof createAdminSupabase>, vehicle
       .maybeSingle();
     if (error) throw new Error(error.message);
     if (data?.storage_path && !data.model_url) {
-      const signed = await admin.storage.from("vehicle-media").createSignedUrl(data.storage_path, 3600);
-      asset = { ...data, model_url: signed.data?.signedUrl ?? null };
+      const modelUrl = await resolveVehicleAssetUrl(admin, data.storage_path);
+      asset = { ...data, model_url: modelUrl };
     } else {
       asset = data;
     }
