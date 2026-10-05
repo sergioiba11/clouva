@@ -86,7 +86,12 @@ async function loadDetail(admin: ReturnType<typeof createAdminSupabase>, vehicle
       .eq("id", bindingsResult.data.creator_3d_asset_id)
       .maybeSingle();
     if (error) throw new Error(error.message);
-    asset = data;
+    if (data?.storage_path && !data.model_url) {
+      const signed = await admin.storage.from("vehicle-media").createSignedUrl(data.storage_path, 3600);
+      asset = { ...data, model_url: signed.data?.signedUrl ?? null };
+    } else {
+      asset = data;
+    }
   }
 
   const mediaIds = (mediaLinksResult.data ?? []).map((row) => row.player_media_id);
