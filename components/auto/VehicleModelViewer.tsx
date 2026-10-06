@@ -137,7 +137,7 @@ function applyMeshMap(root: Object3D, map: Record<string, unknown> | null | unde
 
 const UNO_WHEEL_MOUNTS = {
   trackHalf: 0.70,
-  rimTrackHalf: 0.70,
+  rimTrackHalf: 0.725,
   wheelY: 0.30,
   frontZ: -1.18,
   rearZ: 1.18,
@@ -237,6 +237,7 @@ function createSideDecals(root: Object3D) {
     decal.name = side < 0 ? "CLOUVA_DECAL_LEFT" : "CLOUVA_DECAL_RIGHT";
     decal.position.set(side * 0.802, 0.68, 0.16);
     decal.rotation.y = side < 0 ? Math.PI / 2 : -Math.PI / 2;
+    if (side > 0) decal.scale.x = -1;
     decal.renderOrder = 9;
     group.add(decal);
   }
@@ -823,6 +824,7 @@ export function VehicleModelViewer({
               const paintMaterial = materialName.length === 0 || materialName.startsWith("paint_");
               if (role === "body" && paintMaterial) entry.color.set(tuning.bodyColor);
               if (role === "glass") entry.color.lerp(new Color(0x05050a), tuning.windowTint);
+              if (object.userData.__clouvaTire) entry.color.set(0x090a0c);
             }
             if (role === "glass") {
               entry.transparent = tuning.windowTint > 0.08;
