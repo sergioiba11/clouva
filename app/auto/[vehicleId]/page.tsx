@@ -11,15 +11,20 @@ import {
   Gauge,
   History,
   Loader2,
+  Map as MapIcon,
+  Mic,
   Music2,
   Palette,
   Search,
+  Settings,
   ShieldAlert,
   Sparkles,
   Stethoscope,
   Upload,
+  Video,
   Wrench,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -198,21 +203,17 @@ export default function VehiclePage() {
     void load();
   }, [authLoading, load, router, user, vehicleId]);
 
-  const stateByPart = useMemo(() => new Map((data?.states ?? []).map((state) => [state.part_catalog_id, state])), [data?.states]);
-  const partById = useMemo(() => new Map((data?.parts ?? []).map((part) => [part.id, part])), [data?.parts]);
+  const stateByPart = useMemo(() => new Map((data?.states ?? []).map((state) => [state.part_catalog_id, state] as [string, PartState])), [data?.states]);
+  const partById = useMemo(() => new Map((data?.parts ?? []).map((part) => [part.id, part] as [string, Part])), [data?.parts]);
   const selectedPart = selectedPartId ? partById.get(selectedPartId) ?? null : null;
   const selectedState = selectedPart ? stateByPart.get(selectedPart.id) ?? null : null;
   const partsForSystem = useMemo(() => (data?.parts ?? []).filter((part) => part.system_id === systemId), [data?.parts, systemId]);
 
-  const systemProgress = useMemo(() => {
-    const result = new Map<string, number>();
-    for (const system of data?.systems ?? []) {
-      const parts = (data?.parts ?? []).filter((part) => part.system_id === system.id);
-      const average = parts.length ? parts.reduce((total, part) => total + score(stateByPart.get(part.id)?.status), 0) / parts.length : 0;
-      result.set(system.id, Math.round(average * 100));
-    }
-    return result;
-  }, [data?.parts, data?.systems, stateByPart]);
+  const systemProgress = useMemo(() => new Map((data?.systems ?? []).map((system) => {
+    const parts = (data?.parts ?? []).filter((part) => part.system_id === system.id);
+    const average = parts.length ? parts.reduce((total, part) => total + score(stateByPart.get(part.id)?.status), 0) / parts.length : 0;
+    return [system.id, Math.round(average * 100)] as [string, number];
+  })), [data?.parts, data?.systems, stateByPart]);
 
   const totalProgress = useMemo(() => {
     const systems = data?.systems ?? [];
@@ -493,54 +494,165 @@ export default function VehiclePage() {
 
         {tab === "garage" ? (
           <>
-            <section className="relative mt-2 h-[58dvh] min-h-[380px] max-h-[620px] overflow-hidden rounded-[30px] border border-white/[0.08] bg-[#08070c]">
-              <VehicleModelViewer
-                vehicleId={vehicleId}
-                modelUrl={vehicleModelUrl}
-                partMeshMap={vehiclePartMeshMap}
-                selectedPartKey={selectedPart?.key}
-                onSelectPart={selectPartByKey}
-                tuningConfig={activeTuning}
-                showConfig={activeShow}
-              />
-              <div className="pointer-events-none absolute left-4 top-4 rounded-2xl border border-white/10 bg-black/55 px-3 py-2 backdrop-blur-md"><p className="text-[9px] uppercase tracking-[.16em] text-white/35">Gemelo digital</p><p className="mt-0.5 text-xs font-semibold">Nivel {vehicleModelLevel}{vehicleModelName ? ` · ${vehicleModelName}` : " · representación genérica"}</p></div>
-              <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex items-end justify-between"><div className="rounded-2xl border border-white/10 bg-black/60 px-3 py-2 backdrop-blur"><p className="text-[9px] uppercase tracking-[.16em] text-white/35">Reconstrucción</p><p className="text-2xl font-semibold">{totalProgress}%</p></div><p className="max-w-[155px] rounded-2xl bg-black/55 px-3 py-2 text-right text-[10px] leading-4 text-white/45 backdrop-blur">Giralo y tocá las partes disponibles.</p></div>
-            </section>
-
-            <section className="mt-3 flex items-center justify-between gap-3 rounded-[22px] border border-violet-300/15 bg-violet-300/[0.045] p-4">
-              <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-[.15em] text-violet-200">Modelo 3D del auto</p>
-                <p className="mt-1 truncate text-xs text-white/42">{vehicleModelName ? `${vehicleModelName} · nivel ${vehicleModelLevel}` : "Todavía usa la representación genérica."}</p>
+            {/* Top HUD */}
+            <header className="fixed top-0 left-0 right-0 z-30 flex items-center justify-between gap-2 px-3 py-2 bg-[#05040a]/95 backdrop-blur-xl border-b border-white/[0.05]">
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] font-black uppercase italic tracking-[.18em] text-[#cfff5d]">NFS UNDERGROUND 2 × CLOUVA</span>
               </div>
-              <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-violet-300/20 bg-violet-400/10 px-3 py-2.5 text-xs font-semibold text-violet-100">
-                {uploadingModel ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                {uploadingModel ? "Importando…" : vehicleModelUrl ? "Cambiar GLB" : "Importar GLB"}
-                <input type="file" accept=".glb,model/gltf-binary" disabled={uploadingModel} onChange={(event) => void uploadModel3d(event)} className="hidden" />
-              </label>
-            </section>
-
-            <section className="mt-4 grid grid-cols-3 gap-2">
-              <div className="rounded-2xl border border-white/[0.07] bg-[#0b0912] p-3"><Gauge size={15} className="text-violet-300" /><p className="mt-2 text-[10px] uppercase tracking-[.12em] text-white/35">Kilómetros</p><p className="mt-1 text-sm font-semibold">{Number(data.vehicle.odometer_km).toLocaleString("es-AR")}</p></div>
-              <div className="rounded-2xl border border-white/[0.07] bg-[#0b0912] p-3"><CircleDollarSign size={15} className="text-violet-300" /><p className="mt-2 text-[10px] uppercase tracking-[.12em] text-white/35">Gastado</p><p className="mt-1 text-sm font-semibold">{money(data.costs.total)}</p></div>
-              <div className="rounded-2xl border border-white/[0.07] bg-[#0b0912] p-3"><Wrench size={15} className="text-violet-300" /><p className="mt-2 text-[10px] uppercase tracking-[.12em] text-white/35">Pendientes</p><p className="mt-1 text-sm font-semibold">{repairPlan.length}</p></div>
-            </section>
-
-            <section className="mt-5">
-              <div className="flex gap-2 overflow-x-auto pb-2 [scrollbar-width:none]">
-                {data.systems.map((system) => <button key={system.id} type="button" onClick={() => setSystemId(system.id)} className={`shrink-0 rounded-full border px-3.5 py-2 text-xs ${systemId === system.id ? "border-violet-300/35 bg-violet-400/15 text-violet-100" : "border-white/[0.08] bg-white/[0.03] text-white/45"}`}>{system.name} · {systemProgress.get(system.id) ?? 0}%</button>)}
+              <div className="flex items-center gap-2">
+                <div className="hidden sm:flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5">
+                  <span className="text-[10px] font-semibold text-white/50">CREW</span>
+                  <span className="text-[10px] font-black text-white">BAJOCERO-Z</span>
+                </div>
+                <div className="hidden sm:flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5">
+                  <span className="text-[10px] font-semibold text-white/50">CAR</span>
+                  <span className="text-[10px] font-black text-white">EL UNITO</span>
+                </div>
+                <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5">
+                  <CircleDollarSign size={12} className="text-[#cfff5d]" />
+                  <span className="text-[11px] font-black tabular-nums text-white">{money(data.costs.total)}</span>
+                </div>
+                <div className="hidden md:flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5">
+                  <Gauge size={12} className="text-[#cfff5d]" />
+                  <span className="text-[11px] font-black tabular-nums text-white">{totalProgress}% REP</span>
+                </div>
+                <button type="button" className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/[0.03] text-white/60 hover:text-white hover:bg-white/[0.05]"><Settings size={16} /></button>
               </div>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {partsForSystem.map((part) => {
-                  const state = stateByPart.get(part.id);
-                  return <button key={part.id} type="button" onClick={() => { setSelectedPartId(part.id); setTechnical(false); }} className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#0b0912] p-3 text-left"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${state?.status === "good" || state?.status === "solved" ? "bg-emerald-400" : state?.status === "repair" || state?.status === "replace" || state?.status === "missing" ? "bg-rose-400" : state?.status === "in_progress" ? "bg-amber-300" : "bg-white/25"}`} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{part.name}</span><span className="mt-0.5 block text-[10px] text-white/35">{STATUS_LABEL[state?.status ?? "review"]}</span></span><ChevronRight size={15} className="text-white/20" /></button>;
+            </header>
+
+            {/* Main layout: left rail + center hero + right rail */}
+            <div className="relative pt-14 h-[calc(100vh-4.5rem)] min-h-[500px] flex overflow-hidden">
+              {/* Left vertical category rail */}
+              <aside className="hidden lg:flex lg:flex-col fixed lg:static left-0 top-14 bottom-20 z-20 flex-col items-center gap-1 p-2 bg-[#05040a]/90 backdrop-blur-xl border-r border-white/[0.05]">
+                {([
+                  ["quickrace", "Carrera rápida", Gauge] as const,
+                  ["story", "Modo historia", Car] as const,
+                  ["garage", "Garaje", Car] as const,
+                  ["custom", "Personalización", Palette] as const,
+                  ["audio", "Sonido", Music2] as const,
+                  ["vinyls", "Vinilos/Stickers", Sparkles] as const,
+                  ["parts", "Piezas", Wrench] as const,
+                  ["map", "Mapa", MapIcon] as const,
+                  ["online", "Online", History] as const,
+                ]).map(([key, label, Icon]: readonly [string, string, LucideIcon]) => {
+                  const activeTabMap: Record<string, Tab> = {
+                    garage: "garage",
+                    custom: "tuning",
+                    audio: "show",
+                    parts: "inspect",
+                  };
+                  const targetTab = activeTabMap[key];
+                  const isActive = targetTab && tab === targetTab;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => targetTab && setTab(targetTab)}
+                      className={`flex flex-col items-center gap-1 w-full px-2 py-3 rounded-xl transition-all ${
+                        isActive
+                          ? "bg-[#d1ff52]/15 text-[#d1ff52] shadow-[0_0_12px_rgba(209,255,82,0.25)]"
+                          : "text-white/50 hover:text-white hover:bg-white/[0.04]"
+                      }`}
+                    >
+                      <Icon className="text-[14px]" />
+                      <span className="text-[9px] font-black uppercase italic tracking-[.12em] whitespace-nowrap">{label}</span>
+                    </button>
+                  );
                 })}
-              </div>
-            </section>
+              </aside>
 
-            <section className="mt-5 rounded-[26px] border border-white/[0.07] bg-[#0b0912] p-4">
-              <div className="flex items-center justify-between"><div><p className="text-xs font-semibold">Fotos del auto</p><p className="mt-1 text-[11px] text-white/35">Antes, después, detalle o referencia.</p></div><label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs"><Camera size={14} /> {uploading ? "Subiendo…" : "Agregar"}<input type="file" accept="image/*" capture="environment" className="hidden" disabled={uploading} onChange={(event) => void uploadPhoto(event)} /></label></div>
-              {data.media.length ? <div className="mt-4 flex gap-2 overflow-x-auto pb-1">{data.media.map((item) => item.media?.resolved_url ? <img key={item.id} src={item.media.resolved_url} alt={item.media.caption || "Foto del vehículo"} className="h-24 w-28 shrink-0 rounded-xl object-cover" /> : null)}</div> : <div className="mt-4 grid h-20 place-items-center rounded-2xl border border-dashed border-white/10 text-xs text-white/25">Todavía no cargaste fotos.</div>}
-            </section>
+              {/* Center hero viewer */}
+              <main className="flex-1 relative flex items-stretch justify-center px-2 lg:pl-16">
+                <section className="relative w-full max-w-4xl h-full overflow-hidden rounded-[30px] border border-white/[0.08] bg-[#08070c]">
+                  <VehicleModelViewer
+                    vehicleId={vehicleId}
+                    modelUrl={vehicleModelUrl}
+                    partMeshMap={vehiclePartMeshMap}
+                    selectedPartKey={selectedPart?.key}
+                    onSelectPart={selectPartByKey}
+                    tuningConfig={activeTuning}
+                    showConfig={activeShow}
+                  />
+                  <div className="pointer-events-none absolute left-4 top-4 rounded-2xl border border-white/10 bg-black/55 px-3 py-2 backdrop-blur-md">
+                    <p className="text-[9px] uppercase tracking-[.16em] text-white/35">Gemelo digital</p>
+                    <p className="mt-0.5 text-xs font-semibold">Nivel {vehicleModelLevel}{vehicleModelName ? ` · ${vehicleModelName}` : " · representación genérica"}</p>
+                  </div>
+                  <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex items-end justify-between">
+                    <div className="rounded-2xl border border-white/10 bg-black/60 px-3 py-2 backdrop-blur">
+                      <p className="text-[9px] uppercase tracking-[.16em] text-white/35">Reconstrucción</p>
+                      <p className="text-2xl font-semibold">{totalProgress}%</p>
+                    </div>
+                    <p className="max-w-[155px] rounded-2xl bg-black/55 px-3 py-2 text-right text-[10px] leading-4 text-white/45 backdrop-blur">Giralo y tocá las partes disponibles.</p>
+                  </div>
+                </section>
+              </main>
+
+              {/* Right vertical action rail */}
+              <aside className="hidden lg:flex lg:flex-col fixed lg:static right-0 top-14 bottom-20 z-20 flex-col items-center gap-1 p-2 bg-[#05040a]/90 backdrop-blur-xl border-l border-white/[0.05]">
+                {([
+                  ["camera", "Foto", Camera] as const,
+                  ["video", "Video", Video] as const,
+                  ["audio", "Audio", Mic] as const,
+                ]).map(([key, label, Icon]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className="flex flex-col items-center gap-1 w-full px-2 py-3 rounded-xl transition-all text-white/50 hover:text-white hover:bg-white/[0.04]"
+                  >
+                    <Icon className="text-[14px]" />
+                    <span className="text-[9px] font-black uppercase italic tracking-[.12em] whitespace-nowrap">{label}</span>
+                  </button>
+                ))}
+              </aside>
+            </div>
+
+            {/* Bottom horizontal card strip */}
+            <div className="fixed bottom-20 left-0 right-0 z-20 px-3 pb-2 lg:pb-4 hidden lg:block">
+              <div className="mx-auto max-w-7xl flex gap-2 overflow-x-auto pb-2 [scrollbar-width:none]">
+                {[
+                  { key: "street", label: "Street", icon: Gauge, desc: "Setup callejero" },
+                  { key: "low", label: "Low", icon: Sparkles, desc: "Stance agresivo" },
+                  { key: "show", label: "Show", icon: Music2, desc: "Audio & neón" },
+                  { key: "race", label: "Race", icon: Car, desc: "Rendimiento" },
+                  { key: "custom", label: "Custom", icon: Palette, desc: "Libre" },
+                ].map((card) => (
+                  <button
+                    key={card.key}
+                    type="button"
+                    className="shrink-0 flex flex-col items-start gap-2 w-40 rounded-2xl border border-white/10 bg-[#0b0912] p-3 transition hover:border-[#d1ff52]/40 hover:bg-[#d1ff52]/05"
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-[10px] font-black uppercase italic tracking-[.12em] text-[#cfff5d]">{card.label}</span>
+                      <card.icon className="text-[14px] text-white/40" />
+                    </div>
+                    <p className="text-[10px] text-white/35">{card.desc}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Mobile bottom action bar (replaces right rail on mobile) */}
+            <div className="lg:hidden fixed bottom-20 left-0 right-0 z-20 px-3 pb-2 bg-gradient-to-t from-[#05040a] to-transparent">
+              <div className="mx-auto max-w-7xl flex gap-2 overflow-x-auto pb-2 [scrollbar-width:none]">
+                {([
+                  ["camera", "Foto", Camera] as const,
+                  ["video", "Video", Video] as const,
+                  ["audio", "Audio", Mic] as const,
+                  ["street", "Street", Gauge] as const,
+                  ["low", "Low", Sparkles] as const,
+                  ["show", "Show", Music2] as const,
+                ]).map(([key, label, Icon]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className="shrink-0 flex flex-col items-center gap-1 px-3 py-2 rounded-xl border border-white/10 bg-[#0b0912] transition hover:border-[#d1ff52]/40 hover:bg-[#d1ff52]/05"
+                  >
+                    <Icon className="text-[14px]" />
+                    <span className="text-[8px] font-black uppercase italic tracking-[.1em]">{label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </>
         ) : null}
 
@@ -639,8 +751,8 @@ export default function VehiclePage() {
             </form>
 
             {selectedPart.common_symptoms?.length ? <div className="mt-4"><p className="text-xs font-semibold">Síntomas comunes</p><ul className="mt-2 space-y-1.5">{selectedPart.common_symptoms.map((item) => <li key={item} className="flex gap-2 text-xs leading-5 text-white/45"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-violet-300" />{item}</li>)}</ul></div> : null}
-            {selectedPart.inspection_steps?.length ? <div className="mt-4"><p className="text-xs font-semibold">Cómo revisarlo</p><ol className="mt-2 space-y-2">{selectedPart.inspection_steps.map((item, index) => <li key={item} className="flex gap-3 text-xs leading-5 text-white/45"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-white/[0.05] text-[9px]">{index + 1}</span>{item}</li>)}</ol></div> : null}
-            {(selectedPart.requirements?.tools?.length || selectedPart.requirements?.consumables?.length || selectedPart.requirements?.equipment?.length) ? <div className="mt-4 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="text-xs font-semibold">¿Qué necesitarías?</p><div className="mt-2 flex flex-wrap gap-1.5">{[...(selectedPart.requirements.tools ?? []), ...(selectedPart.requirements.consumables ?? []), ...(selectedPart.requirements.equipment ?? [])].map((item) => <span key={item} className="rounded-lg bg-white/[0.05] px-2 py-1 text-[10px] text-white/45">{item}</span>)}</div></div> : null}
+            {selectedPart.inspection_steps?.length ? <div className="mt-4"><p className="text-xs font-semibold">Cómo revisarlo</p><ol className="mt-2 space-y-2">{selectedPart.inspection_steps.map((item: string, index: number) => <li key={item} className="flex gap-3 text-xs leading-5 text-white/45"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-white/[0.05] text-[9px]">{index + 1}</span>{item}</li>)}</ol></div> : null}
+            {(selectedPart.requirements?.tools?.length || selectedPart.requirements?.consumables?.length || selectedPart.requirements?.equipment?.length) ? <div className="mt-4 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="text-xs font-semibold">¿Qué necesitarías?</p><div className="mt-2 flex flex-wrap gap-1.5">{[...(selectedPart.requirements.tools ?? []), ...(selectedPart.requirements.consumables ?? []), ...(selectedPart.requirements.equipment ?? [])].map((item: string) => <span key={item} className="rounded-lg bg-white/[0.05] px-2 py-1 text-[10px] text-white/45">{item}</span>)}</div></div> : null}
             {selectedPart.safety_level !== "basic" ? <div className="mt-4 flex gap-3 rounded-2xl border border-amber-200/10 bg-amber-200/[0.04] p-4"><ShieldAlert size={18} className="shrink-0 text-amber-200" /><p className="text-xs leading-5 text-amber-100/60">{selectedPart.safety_level === "specialist" ? "Esta revisión o reparación requiere herramientas/equipamiento específico y conocimiento técnico." : "Esta tarea requiere medidas de seguridad y procedimiento correcto antes de desmontar o intervenir."}</p></div> : null}
 
             <div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => openAssistant(`Estoy viendo ${selectedPart.name} en mi ${data.vehicle.make} ${data.vehicle.model}. Explicame en simple qué revisar, usando el estado real cargado en CLOUVA Auto.`)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-500 px-3 py-3 text-xs font-semibold"><Sparkles size={14} /> Preguntar a Trébol</button><Link href={`/catalogo?q=${encodeURIComponent(selectedPart.name)}`} className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs"><Search size={14} /> Repuestos</Link></div>
