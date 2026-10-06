@@ -126,6 +126,54 @@ function applyMeshMap(root: Object3D, map: Record<string, unknown> | null | unde
   });
 }
 
+function restoreNfsMountPoints(root: Object3D) {
+  const wheel = root.getObjectByName("UNO_KIT00_FRONT_WHEEL_A");
+  const frontBrake = root.getObjectByName("UNO_KIT00_FRONT_BRAKE_A");
+  const rearBrake = root.getObjectByName("UNO_KIT00_REAR_BRAKE_A");
+  const exhaust = root.getObjectByName("UNO_KIT00_EXHAUST_A");
+  const shellParts = [
+    root.getObjectByName("UNO_KIT00_BODY_A"),
+    root.getObjectByName("UNO_BASE_A"),
+  ].filter((part): part is Object3D => Boolean(part));
+
+  if (!wheel || !shellParts.length) return;
+
+  const shellBox = new Box3();
+  for (const part of shellParts) shellBox.expandByObject(part);
+  const wheelBox = new Box3().setFromObject(wheel);
+  const wheelSize = wheelBox.getSize(new Vector3());
+  const radius = Math.max(wheelSize.y, wheelSize.z) / 2;
+  const halfWidth = Math.max(Math.abs(shellBox.min.x), Math.abs(shellBox.max.x));
+  const centerZ = (shellBox.min.z + shellBox.max.z) / 2;
+  const halfWheelbase = (shellBox.max.z - shellBox.min.z) * 0.33;
+  const wheelY = shellBox.min.y + radius;
+  const frontZ = centerZ - halfWheelbase;
+  const rearZ = centerZ + halfWheelbase;
+
+  const mountPair = (source: Object3D | null, prefix: string, partKey: string, z: number) => {
+    if (!source) return;
+    for (const side of [-1, 1] as const) {
+      const mounted = source.clone(true);
+      mounted.name = `${prefix}_${side < 0 ? "LEFT" : "RIGHT"}`;
+      mounted.position.set(side * halfWidth, wheelY, z);
+      if (side > 0) mounted.scale.x *= -1;
+      mounted.userData.partKey = partKey;
+      if (partKey.includes("tires")) mounted.userData.tuningRole = "wheel";
+      root.add(mounted);
+    }
+    source.removeFromParent();
+  };
+
+  mountPair(wheel, "UNO_FRONT_WHEEL", "front_tires", frontZ);
+  mountPair(wheel, "UNO_REAR_WHEEL", "rear_tires", rearZ);
+  mountPair(frontBrake ?? null, "UNO_FRONT_BRAKE", "front_brake_pads", frontZ);
+  mountPair(rearBrake ?? null, "UNO_REAR_BRAKE", "rear_brake_pads", rearZ);
+
+  if (exhaust) {
+    exhaust.position.set(-halfWidth + 0.13, shellBox.min.y + 0.14, shellBox.max.z - 0.04);
+  }
+}
+
 function inferTuningRole(object: Object3D) {
   if (typeof object.userData.tuningRole === "string") return object.userData.tuningRole as string;
   const key = typeof object.userData.partKey === "string" ? object.userData.partKey : "";
@@ -276,6 +324,7 @@ export function VehicleModelViewer({
       loader.load(
         modelUrl,
         (gltf) => {
+          restoreNfsMountPoints(gltf.scene);
           normalizeModel(gltf.scene);
           applyMeshMap(gltf.scene, partMeshMap);
           addRoot(gltf.scene);
@@ -338,7 +387,9 @@ export function VehicleModelViewer({
             if ("color" in entry && entry.color instanceof Color) {
               const original = baseColors?.[index];
               if (original) entry.color.copy(original);
-              if (role === "body") entry.color.set(tuning.bodyColor);
+              const materialName = entry.name.toLowerCase();
+              const paintMaterial = materialName.length === 0 || materialName.startsWith("paint_");
+              if (role === "body" && paintMaterial) entry.color.set(tuning.bodyColor);
               if (role === "glass") entry.color.lerp(new Color(0x05050a), tuning.windowTint);
             }
             if (role === "glass") {
