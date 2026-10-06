@@ -1,4 +1,5 @@
 export type VehicleScenePreset = "underground" | "ice" | "blackout";
+export type VehicleWheelPreset = "bbs" | "enkei" | "momo" | "oz" | "rays" | "volk";
 export type VehicleDecalPreset =
   | "none"
   | "bajoceroz"
@@ -15,8 +16,10 @@ export type VehicleTuningConfig = {
   bodyColor: string;
   rideHeight: number;
   wheelScale: number;
+  wheelStyle: VehicleWheelPreset;
   windowTint: number;
   headlights: boolean;
+  headlightStyle: number;
   neonEnabled: boolean;
   neonColor: string;
   neonIntensity: number;
@@ -49,8 +52,10 @@ export const DEFAULT_VEHICLE_TUNING: VehicleTuningConfig = {
   bodyColor: "#6d4aff",
   rideHeight: -0.08,
   wheelScale: 1,
+  wheelStyle: "bbs",
   windowTint: 0.58,
   headlights: true,
+  headlightStyle: 0,
   neonEnabled: true,
   neonColor: "#8b5cff",
   neonIntensity: 1.15,
@@ -103,9 +108,13 @@ export function normalizeVehicleTuning(value: unknown): VehicleTuningConfig {
   return {
     bodyColor: color(data.bodyColor, DEFAULT_VEHICLE_TUNING.bodyColor),
     rideHeight: numberIn(data.rideHeight, DEFAULT_VEHICLE_TUNING.rideHeight, -0.3, 0.35),
-    wheelScale: numberIn(data.wheelScale, DEFAULT_VEHICLE_TUNING.wheelScale, 0.78, 1.35),
+    wheelScale: numberIn(data.wheelScale, DEFAULT_VEHICLE_TUNING.wheelScale, 0.82, 1.24),
+    wheelStyle: data.wheelStyle === "bbs" || data.wheelStyle === "enkei" || data.wheelStyle === "momo" || data.wheelStyle === "oz" || data.wheelStyle === "rays" || data.wheelStyle === "volk"
+      ? data.wheelStyle
+      : DEFAULT_VEHICLE_TUNING.wheelStyle,
     windowTint: numberIn(data.windowTint, DEFAULT_VEHICLE_TUNING.windowTint, 0, 0.92),
     headlights: bool(data.headlights, DEFAULT_VEHICLE_TUNING.headlights),
+    headlightStyle: Number(data.headlightStyle) === 5 ? 5 : 0,
     neonEnabled: bool(data.neonEnabled, DEFAULT_VEHICLE_TUNING.neonEnabled),
     neonColor: color(data.neonColor, DEFAULT_VEHICLE_TUNING.neonColor),
     neonIntensity: numberIn(data.neonIntensity, DEFAULT_VEHICLE_TUNING.neonIntensity, 0, 3),

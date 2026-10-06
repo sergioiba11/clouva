@@ -135,52 +135,63 @@ function applyMeshMap(root: Object3D, map: Record<string, unknown> | null | unde
   });
 }
 
+const UNO_WHEEL_MOUNTS = {
+  trackHalf: 0.70,
+  rimTrackHalf: 0.70,
+  wheelY: 0.30,
+  frontZ: -1.18,
+  rearZ: 1.18,
+};
+
+const NFS_WHEEL_PATHS: Record<VehicleTuningConfig["wheelStyle"], string> = {
+  bbs: "/models/vehicles/nfsu2-wheels/bbs.glb",
+  enkei: "/models/vehicles/nfsu2-wheels/enkei.glb",
+  momo: "/models/vehicles/nfsu2-wheels/momo.glb",
+  oz: "/models/vehicles/nfsu2-wheels/oz.glb",
+  rays: "/models/vehicles/nfsu2-wheels/rays.glb",
+  volk: "/models/vehicles/nfsu2-wheels/volk.glb",
+};
+
 function restoreNfsMountPoints(root: Object3D) {
-  const wheel = root.getObjectByName("UNO_KIT00_FRONT_WHEEL_A");
+  const tire = root.getObjectByName("UNO_KIT00_FRONT_WHEEL_A");
   const frontBrake = root.getObjectByName("UNO_KIT00_FRONT_BRAKE_A");
   const rearBrake = root.getObjectByName("UNO_KIT00_REAR_BRAKE_A");
   const exhaust = root.getObjectByName("UNO_KIT00_EXHAUST_A");
-  const shellParts = [
-    root.getObjectByName("UNO_KIT00_BODY_A"),
-    root.getObjectByName("UNO_BASE_A"),
-  ].filter((part): part is Object3D => Boolean(part));
 
-  if (!wheel || !shellParts.length) return;
-
-  const shellBox = new Box3();
-  for (const part of shellParts) shellBox.expandByObject(part);
-  const wheelBox = new Box3().setFromObject(wheel);
-  const wheelSize = wheelBox.getSize(new Vector3());
-  const radius = Math.max(wheelSize.y, wheelSize.z) / 2;
-  const halfWidth = Math.max(Math.abs(shellBox.min.x), Math.abs(shellBox.max.x));
-  const centerZ = (shellBox.min.z + shellBox.max.z) / 2;
-  const halfWheelbase = (shellBox.max.z - shellBox.min.z) * 0.33;
-  const wheelY = shellBox.min.y + radius;
-  const frontZ = centerZ - halfWheelbase;
-  const rearZ = centerZ + halfWheelbase;
-
-  const mountPair = (source: Object3D | null, prefix: string, partKey: string, z: number) => {
+  const mountPair = (
+    source: Object3D | null,
+    prefix: string,
+    partKey: string,
+    z: number,
+    x: number,
+    wheel = false,
+  ) => {
     if (!source) return;
     for (const side of [-1, 1] as const) {
       const mounted = source.clone(true);
       mounted.name = `${prefix}_${side < 0 ? "LEFT" : "RIGHT"}`;
-      mounted.position.set(side * halfWidth, wheelY, z);
+      mounted.position.set(side * x, UNO_WHEEL_MOUNTS.wheelY, z);
       if (side > 0) mounted.scale.x *= -1;
       mounted.userData.partKey = partKey;
-      if (partKey.includes("tires")) mounted.userData.tuningRole = "wheel";
+      if (wheel) mounted.userData.tuningRole = "wheel";
+      mounted.traverse((child) => {
+        child.userData.partKey = child.userData.partKey || partKey;
+        if (wheel) {
+          child.userData.tuningRole = "wheel";
+          child.userData.__clouvaTire = true;
+        }
+      });
       root.add(mounted);
     }
     source.removeFromParent();
   };
 
-  mountPair(wheel, "UNO_FRONT_WHEEL", "front_tires", frontZ);
-  mountPair(wheel, "UNO_REAR_WHEEL", "rear_tires", rearZ);
-  mountPair(frontBrake ?? null, "UNO_FRONT_BRAKE", "front_brake_pads", frontZ);
-  mountPair(rearBrake ?? null, "UNO_REAR_BRAKE", "rear_brake_pads", rearZ);
+  mountPair(tire ?? null, "UNO_FRONT_TIRE", "front_tires", UNO_WHEEL_MOUNTS.frontZ, UNO_WHEEL_MOUNTS.trackHalf, true);
+  mountPair(tire ?? null, "UNO_REAR_TIRE", "rear_tires", UNO_WHEEL_MOUNTS.rearZ, UNO_WHEEL_MOUNTS.trackHalf, true);
+  mountPair(frontBrake ?? null, "UNO_FRONT_BRAKE", "front_brake_pads", UNO_WHEEL_MOUNTS.frontZ, UNO_WHEEL_MOUNTS.trackHalf - 0.015);
+  mountPair(rearBrake ?? null, "UNO_REAR_BRAKE", "rear_brake_pads", UNO_WHEEL_MOUNTS.rearZ, UNO_WHEEL_MOUNTS.trackHalf - 0.015);
 
-  if (exhaust) {
-    exhaust.position.set(-halfWidth + 0.13, shellBox.min.y + 0.14, shellBox.max.z - 0.04);
-  }
+  if (exhaust) exhaust.position.set(-0.62, 0.17, 1.69);
 }
 
 function makeTextDecalTexture(label: string) {
@@ -296,6 +307,11 @@ function setNfsVariantVisibility(root: Object3D, tuning: VehicleTuningConfig) {
       return;
     }
 
+    if (name === "UNO_STYLE05_HEADLIGHT_LEFT_") {
+      object.visible = tuning.headlightStyle === 5;
+      return;
+    }
+
     const stockKit = name.match(/^UNO_KIT00_(FRONT_BUMPER|REAR_BUMPER|SKIRT)_A$/);
     if (stockKit) {
       object.visible = widebody === 0 && bodyKit === 0;
@@ -365,6 +381,15 @@ function cloneMaterials(root: Object3D) {
     const materials = Array.isArray(object.material) ? object.material : [object.material];
     object.userData.__clouvaBaseColors = materials.map((entry) => ("color" in entry && entry.color instanceof Color ? entry.color.clone() : null));
     object.userData.__clouvaBaseOpacity = materials.map((entry) => entry.opacity);
+    if (object.userData.__clouvaTire) {
+      for (const entry of materials) {
+        if ("color" in entry && entry.color instanceof Color) entry.color.set(0x090a0c);
+        if (entry instanceof MeshStandardMaterial) {
+          entry.roughness = 0.92;
+          entry.metalness = 0.04;
+        }
+      }
+    }
   });
 }
 
@@ -422,11 +447,11 @@ export function VehicleModelViewer({
     if (!host) return;
 
     const scene = new Scene();
-    scene.background = new Color(0x08070c);
-    scene.fog = new FogExp2(0x08070c, 0.035);
+    scene.background = new Color(0x14150f);
+    scene.fog = new FogExp2(0x14150f, 0.018);
 
-    const camera = new PerspectiveCamera(42, 1, 0.05, 100);
-    camera.position.set(6.6, 3.5, 6.6);
+    const camera = new PerspectiveCamera(38, 1, 0.05, 100);
+    camera.position.set(5.45, 2.65, 5.25);
 
     const renderer = new WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -461,12 +486,44 @@ export function VehicleModelViewer({
     rim.position.set(-5, 3, -4);
     scene.add(rim);
 
-    const floorMaterial = new MeshStandardMaterial({ color: 0x0b0910, roughness: 0.74, metalness: 0.2 });
+    const floorMaterial = new MeshStandardMaterial({ color: 0x171812, roughness: 0.64, metalness: 0.18 });
     const floor = new Mesh(new PlaneGeometry(30, 30), floorMaterial);
     floor.rotation.x = -Math.PI / 2;
-    floor.position.y = 0;
+    floor.position.y = -0.055;
     floor.receiveShadow = true;
     scene.add(floor);
+
+    const platform = new Mesh(
+      new CylinderGeometry(2.5, 2.68, 0.10, 72),
+      new MeshStandardMaterial({ color: 0xb9b9ae, roughness: 0.34, metalness: 0.42 }),
+    );
+    platform.position.y = 0;
+    platform.receiveShadow = true;
+    platform.castShadow = true;
+    scene.add(platform);
+
+    const platformBase = new Mesh(
+      new CylinderGeometry(2.72, 2.72, 0.05, 72),
+      new MeshStandardMaterial({ color: 0x11120e, roughness: 0.46, metalness: 0.48 }),
+    );
+    platformBase.position.y = -0.055;
+    platformBase.receiveShadow = true;
+    scene.add(platformBase);
+
+    const backWall = new Mesh(
+      new PlaneGeometry(11, 5.6),
+      new MeshStandardMaterial({ color: 0x24251f, roughness: 0.88, metalness: 0.05 }),
+    );
+    backWall.position.set(0, 2.55, -4.35);
+    backWall.receiveShadow = true;
+    scene.add(backWall);
+
+    const stripMaterial = new MeshBasicMaterial({ color: 0xd9ffad });
+    for (const x of [-3.6, -2.4, -1.2, 0, 1.2, 2.4, 3.6]) {
+      const strip = new Mesh(new BoxGeometry(0.055, 2.7, 0.035), stripMaterial);
+      strip.position.set(x, 2.55, -4.25);
+      scene.add(strip);
+    }
 
     const neonMaterial = new MeshBasicMaterial({ color: 0x8b5cff, transparent: true, opacity: 0.28, depthWrite: false });
     const neonPlane = new Mesh(new PlaneGeometry(4.9, 2.25), neonMaterial);
@@ -488,18 +545,21 @@ export function VehicleModelViewer({
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.enablePan = false;
-    controls.minDistance = 3.2;
-    controls.maxDistance = 12;
-    controls.target.set(0, 0.85, 0);
+    controls.minDistance = 3.6;
+    controls.maxDistance = 9.5;
+    controls.target.set(0, 0.82, 0);
 
     let vehicleRoot: Object3D | null = null;
     let decalGroup: Group | null = null;
     let audioGroup: Group | null = null;
+    let wheelGroup: Group | null = null;
     let baseRootY = 0;
     let lastTuning = "";
     let lastScene = "";
     let lastDecalSignature = "";
+    let lastWheelStyle = "";
     let decalLoadToken = 0;
+    let wheelLoadToken = 0;
     const audioCache: { values: Uint8Array<ArrayBuffer> | null } = { values: null };
 
     const applyDecalTexture = (texture: CanvasTexture | ReturnType<TextureLoader["load"]> | null, visible = true) => {
@@ -597,16 +657,80 @@ export function VehicleModelViewer({
       applyDecalTexture(makeTextDecalTexture(label), true);
     };
 
+    const updateWheels = (tuning: VehicleTuningConfig) => {
+      if (!vehicleRoot?.getObjectByName("UNO_BASE_A") || !wheelGroup) return;
+
+      for (const child of wheelGroup.children) {
+        const base = Number(child.userData.__clouvaRimBaseScale || 1);
+        const mirror = Number(child.userData.__clouvaRimMirror || 1);
+        child.scale.set(base * tuning.wheelScale * mirror, base * tuning.wheelScale, base * tuning.wheelScale);
+      }
+
+      if (lastWheelStyle === tuning.wheelStyle && wheelGroup.children.length > 0) return;
+      lastWheelStyle = tuning.wheelStyle;
+      wheelLoadToken += 1;
+      const token = wheelLoadToken;
+      while (wheelGroup.children.length) wheelGroup.remove(wheelGroup.children[0]);
+
+      const loader = new GLTFLoader();
+      loader.setMeshoptDecoder(MeshoptDecoder);
+      loader.load(
+        NFS_WHEEL_PATHS[tuning.wheelStyle],
+        (gltf) => {
+          if (token !== wheelLoadToken || !wheelGroup) return;
+          cloneMaterials(gltf.scene);
+          const wheelBox = new Box3().setFromObject(gltf.scene);
+          const size = wheelBox.getSize(new Vector3());
+          const radius = Math.max(size.y, size.z) / 2 || 1;
+          const baseScale = 0.285 / radius;
+          const mounts = [
+            { side: -1, z: UNO_WHEEL_MOUNTS.frontZ, key: "front_tires" },
+            { side: 1, z: UNO_WHEEL_MOUNTS.frontZ, key: "front_tires" },
+            { side: -1, z: UNO_WHEEL_MOUNTS.rearZ, key: "rear_tires" },
+            { side: 1, z: UNO_WHEEL_MOUNTS.rearZ, key: "rear_tires" },
+          ] as const;
+          for (const mount of mounts) {
+            const rimObject = gltf.scene.clone(true);
+            const mirror = mount.side > 0 ? -1 : 1;
+            rimObject.name = `NFS_RIM_${tuning.wheelStyle.toUpperCase()}_${mount.key}_${mount.side > 0 ? "RIGHT" : "LEFT"}`;
+            rimObject.position.set(mount.side * UNO_WHEEL_MOUNTS.rimTrackHalf, UNO_WHEEL_MOUNTS.wheelY, mount.z);
+            rimObject.scale.set(
+              baseScale * tuningRef.current.wheelScale * mirror,
+              baseScale * tuningRef.current.wheelScale,
+              baseScale * tuningRef.current.wheelScale,
+            );
+            rimObject.userData.partKey = mount.key;
+            rimObject.userData.__clouvaRimBaseScale = baseScale;
+            rimObject.userData.__clouvaRimMirror = mirror;
+            rimObject.traverse((child) => {
+              child.userData.partKey = child.userData.partKey || mount.key;
+              if (child instanceof Mesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+              }
+            });
+            wheelGroup.add(rimObject);
+          }
+        },
+      );
+    };
+
     const addRoot = (root: Object3D) => {
       cloneMaterials(root);
       vehicleRoot = root;
       const isUnoAsset = Boolean(root.getObjectByName("UNO_BASE_A"));
       decalGroup = isUnoAsset ? createSideDecals(root) : null;
       audioGroup = isUnoAsset ? createAudioSetup(root) : null;
+      wheelGroup = isUnoAsset ? new Group() : null;
+      if (wheelGroup) {
+        wheelGroup.name = "NFSU2_RIMS";
+        root.add(wheelGroup);
+      }
       if (audioGroup) audioGroup.visible = tuningRef.current.audioTrunkOpen;
       baseRootY = root.position.y;
       scene.add(root);
       void updateDecals(tuningRef.current);
+      updateWheels(tuningRef.current);
     };
 
     if (modelUrl) {
@@ -667,6 +791,7 @@ export function VehicleModelViewer({
         setNfsVariantVisibility(vehicleRoot, tuning);
         if (audioGroup) audioGroup.visible = tuning.audioTrunkOpen;
         void updateDecals(tuning);
+        updateWheels(tuning);
         vehicleRoot.traverse((object) => {
           if (!(object instanceof Mesh)) return;
           const role = typeof object.userData.tuningRole === "string" ? object.userData.tuningRole : inferTuningRole(object);
@@ -718,11 +843,11 @@ export function VehicleModelViewer({
           rim.color.set(0xa38cff);
           floorMaterial.color.set(0x030304);
         } else {
-          scene.background = new Color(0x08070c);
-          scene.fog = new FogExp2(0x08070c, 0.035);
-          hemi.color.set(0xb7c8ff);
-          rim.color.set(0x9b7bff);
-          floorMaterial.color.set(0x0b0910);
+          scene.background = new Color(0x14150f);
+          scene.fog = new FogExp2(0x14150f, 0.018);
+          hemi.color.set(0xe7edd7);
+          rim.color.set(0xb9ff62);
+          floorMaterial.color.set(0x171812);
         }
       }
 
