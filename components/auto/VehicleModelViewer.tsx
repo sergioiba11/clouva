@@ -679,6 +679,19 @@ export function VehicleModelViewer({
         (gltf) => {
           if (token !== wheelLoadToken || !wheelGroup) return;
           cloneMaterials(gltf.scene);
+          gltf.scene.traverse((object) => {
+            if (!(object instanceof Mesh)) return;
+            const materials = Array.isArray(object.material) ? object.material : [object.material];
+            const darkInset = /_2$/i.test(object.name);
+            const midInset = /_1$/i.test(object.name);
+            for (const entry of materials) {
+              if (!(entry instanceof MeshStandardMaterial)) continue;
+              entry.color.set(darkInset ? 0x22262a : midInset ? 0x858b90 : 0xd8dde1);
+              entry.metalness = darkInset ? 0.5 : 0.92;
+              entry.roughness = darkInset ? 0.38 : 0.18;
+              entry.envMapIntensity = 1.65;
+            }
+          });
           const wheelBox = new Box3().setFromObject(gltf.scene);
           const size = wheelBox.getSize(new Vector3());
           const radius = Math.max(size.y, size.z) / 2 || 1;
