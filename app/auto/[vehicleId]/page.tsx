@@ -748,7 +748,7 @@ export default function VehiclePage() {
         ) : null}
       </div>
 
-      <nav className="fixed bottom-3 left-1/2 z-40 flex w-full max-w-[calc(100%-24px)] max-w-3xl -translate-x-1/2 items-center justify-start gap-1 overflow-x-auto rounded-[22px] border border-white/10 bg-[#0c0912]/95 p-1.5 shadow-2xl backdrop-blur-xl [scrollbar-width:none] sm:justify-around px-2 flex-wrap">
+      <nav className="fixed bottom-3 left-1/2 z-40 flex w-full max-w-[calc(100%-24px)] max-w-3xl -translate-x-1/2 items-center justify-start gap-1 overflow-x-auto rounded-[22px] border border-white/10 bg-[#0c0912]/95 p-1.5 shadow-2xl backdrop-blur-xl [scrollbar-width:none] sm:justify-around px-2">
         {([
           ["garage", Car, "Auto"],
           ["tuning", Palette, "Tuning"],
@@ -756,7 +756,20 @@ export default function VehiclePage() {
           ["inspect", Stethoscope, "Revisar"],
           ["repair", Wrench, "Arreglar"],
           ["history", History, "Historial"],
-        ] as const).map(([key, Icon, label]) => <button key={key} type="button" onClick={() => setTab(key)} className={`flex min-w-[56px] shrink-0 flex-col items-center gap-1 rounded-2xl px-2 py-2 text-[9px] ${tab === key ? "bg-violet-400/15 text-violet-200" : "text-white/38"}`}><Icon size={15} /><span>{label}</span></button>)}
+        ] as const).map(([key, Icon, label]) => {
+          const isMobileHidden = key === "repair" || key === "history";
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`flex min-w-[56px] shrink-0 flex-col items-center gap-1 rounded-2xl px-2 py-2 text-[9px] whitespace-nowrap ${tab === key ? "bg-violet-400/15 text-violet-200" : "text-white/38"} ${isMobileHidden ? "hidden sm:flex" : ""}`}
+            >
+              <Icon size={15} />
+              <span>{label}</span>
+            </button>
+          );
+        })}
       </nav>
 
       {selectedPart ? (
