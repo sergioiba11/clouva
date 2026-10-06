@@ -543,11 +543,31 @@ export default function VehiclePage() {
                   };
                   const targetTab = activeTabMap[key];
                   const isActive = targetTab && tab === targetTab;
+                  const handleClick = () => {
+                    if (targetTab) {
+                      setTab(targetTab);
+                    } else if (key === "quickrace") {
+                      // Quick race - could navigate to a race mode
+                      openAssistant(`Carrera rápida seleccionada para ${vehicleTitle}. Preparando...`);
+                    } else if (key === "story") {
+                      // Story mode
+                      openAssistant(`Modo historia seleccionado para ${vehicleTitle}.`);
+                    } else if (key === "vinyls") {
+                      // Navigate to vinyls in tuning
+                      setTab("tuning");
+                    } else if (key === "map") {
+                      // Map view
+                      openAssistant(`Mapa seleccionado para ${vehicleTitle}.`);
+                    } else if (key === "online") {
+                      // Online mode
+                      openAssistant(`Modo online seleccionado para ${vehicleTitle}.`);
+                    }
+                  };
                   return (
                     <button
                       key={key}
                       type="button"
-                      onClick={() => targetTab && setTab(targetTab)}
+                      onClick={handleClick}
                       className={`flex flex-col items-center gap-1 w-full px-2 py-3 rounded-xl transition-all ${
                         isActive
                           ? "bg-[#d1ff52]/15 text-[#d1ff52] shadow-[0_0_12px_rgba(209,255,82,0.25)]"
@@ -630,8 +650,7 @@ export default function VehiclePage() {
                 ))}
               </div>
             </div>
-
-            {/* Mobile bottom action bar (replaces right rail on mobile) */}
+{/* Mobile bottom action bar (replaces right rail on mobile) */}
             <div className="lg:hidden fixed bottom-20 left-0 right-0 z-20 px-3 pb-2 bg-gradient-to-t from-[#05040a] to-transparent">
               <div className="mx-auto max-w-7xl flex gap-2 overflow-x-auto pb-2 [scrollbar-width:none]">
                 {([
@@ -641,16 +660,27 @@ export default function VehiclePage() {
                   ["street", "Street", Gauge] as const,
                   ["low", "Low", Sparkles] as const,
                   ["show", "Show", Music2] as const,
-                ]).map(([key, label, Icon]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className="shrink-0 flex flex-col items-center gap-1 px-3 py-2 rounded-xl border border-white/10 bg-[#0b0912] transition hover:border-[#d1ff52]/40 hover:bg-[#d1ff52]/05"
-                  >
-                    <Icon className="text-[14px]" />
-                    <span className="text-[8px] font-black uppercase italic tracking-[.1em]">{label}</span>
-                  </button>
-                ))}
+                ]).map(([key, label, Icon]) => {
+                  let onClick: () => void;
+                  if (key === "camera") onClick = () => openAssistant(`Modo foto activado para ${vehicleTitle}.`);
+                  else if (key === "video") onClick = () => openAssistant(`Modo video activado para ${vehicleTitle}.`);
+                  else if (key === "audio") onClick = () => openAssistant(`Modo audio activado para ${vehicleTitle}.`);
+                  else if (key === "street") onClick = () => { setTab("tuning"); openAssistant(`Aplicando preset Street para ${vehicleTitle}...`); };
+                  else if (key === "low") onClick = () => { setTab("tuning"); openAssistant(`Aplicando preset Low para ${vehicleTitle}...`); };
+                  else if (key === "show") onClick = () => { setTab("show"); openAssistant(`Modo Show activado para ${vehicleTitle}.`); };
+                  else onClick = () => {};
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={onClick}
+                      className="shrink-0 flex flex-col items-center gap-1 px-3 py-2 rounded-xl border border-white/10 bg-[#0b0912] transition hover:border-[#d1ff52]/40 hover:bg-[#d1ff52]/05"
+                    >
+                      <Icon className="text-[14px]" />
+                      <span className="text-[8px] font-black uppercase italic tracking-[.1em]">{label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </>
@@ -718,7 +748,7 @@ export default function VehiclePage() {
         ) : null}
       </div>
 
-      <nav className="fixed bottom-3 left-1/2 z-40 flex w-full max-w-[calc(100%-24px)] max-w-3xl -translate-x-1/2 items-center justify-start gap-1 overflow-x-auto rounded-[22px] border border-white/10 bg-[#0c0912]/95 p-1.5 shadow-2xl backdrop-blur-xl [scrollbar-width:none] sm:justify-around px-2">
+      <nav className="fixed bottom-3 left-1/2 z-40 flex w-full max-w-[calc(100%-24px)] max-w-3xl -translate-x-1/2 items-center justify-start gap-1 overflow-x-auto rounded-[22px] border border-white/10 bg-[#0c0912]/95 p-1.5 shadow-2xl backdrop-blur-xl [scrollbar-width:none] sm:justify-around px-2 flex-wrap">
         {([
           ["garage", Car, "Auto"],
           ["tuning", Palette, "Tuning"],
@@ -726,7 +756,7 @@ export default function VehiclePage() {
           ["inspect", Stethoscope, "Revisar"],
           ["repair", Wrench, "Arreglar"],
           ["history", History, "Historial"],
-        ] as const).map(([key, Icon, label]) => <button key={key} type="button" onClick={() => setTab(key)} className={`flex min-w-[68px] shrink-0 flex-col items-center gap-1 rounded-2xl px-2.5 py-2 text-[10px] ${tab === key ? "bg-violet-400/15 text-violet-200" : "text-white/38"}`}><Icon size={17} /><span>{label}</span></button>)}
+        ] as const).map(([key, Icon, label]) => <button key={key} type="button" onClick={() => setTab(key)} className={`flex min-w-[56px] shrink-0 flex-col items-center gap-1 rounded-2xl px-2 py-2 text-[9px] ${tab === key ? "bg-violet-400/15 text-violet-200" : "text-white/38"}`}><Icon size={15} /><span>{label}</span></button>)}
       </nav>
 
       {selectedPart ? (
