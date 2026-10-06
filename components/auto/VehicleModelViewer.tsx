@@ -98,10 +98,11 @@ function proceduralVehicle() {
   const wheelGeometry = new CylinderGeometry(0.48, 0.48, 0.3, 32);
   for (const x of [-1.35, 1.35]) {
     for (const z of [-0.94, 0.94]) {
-      const wheel = tag(new Mesh(wheelGeometry, material(0x111115, 0.78, 0.18)), x > 0 ? "front_tires" : "rear_tires", "wheel");
+      const wheel = tag(new Mesh(wheelGeometry, material(0x0a0a0c, 0.9, 0.02)), x > 0 ? "front_tires" : "rear_tires", "wheel");
       wheel.name = `clouva_wheel_${x}_${z}`;
       wheel.rotation.x = Math.PI / 2;
       wheel.position.set(x, 0.48, z);
+      wheel.userData.__clouvaTire = true;
       root.add(wheel);
     }
   }
@@ -138,7 +139,7 @@ function applyMeshMap(root: Object3D, map: Record<string, unknown> | null | unde
 const UNO_WHEEL_MOUNTS = {
   trackHalf: 0.70,
   rimTrackHalf: 0.725,
-  wheelY: 0.30,
+  wheelY: 0.32,
   frontZ: -1.18,
   rearZ: 1.18,
 };
@@ -448,11 +449,11 @@ export function VehicleModelViewer({
     if (!host) return;
 
     const scene = new Scene();
-    scene.background = new Color(0x14150f);
-    scene.fog = new FogExp2(0x14150f, 0.018);
+    scene.background = new Color(0x05040a);
+    scene.fog = new FogExp2(0x05040a, 0.025);
 
-    const camera = new PerspectiveCamera(38, 1, 0.05, 100);
-    camera.position.set(5.45, 2.65, 5.25);
+    const camera = new PerspectiveCamera(42, 1, 0.05, 100);
+    camera.position.set(4.2, 1.65, 3.8);
 
     const renderer = new WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -469,74 +470,77 @@ export function VehicleModelViewer({
     renderer.domElement.style.touchAction = "none";
     host.appendChild(renderer.domElement);
 
-    const hemi = new HemisphereLight(0xb7c8ff, 0x140d1e, 2.4);
+    const hemi = new HemisphereLight(0x8ab4ff, 0x0a0812, 1.8);
     scene.add(hemi);
-    const key = new DirectionalLight(0xffffff, 3.6);
-    key.position.set(4, 7, 5);
+    const key = new DirectionalLight(0xffffff, 4.2);
+    key.position.set(3.5, 6, 4);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
     key.shadow.bias = -0.00025;
     key.shadow.camera.near = 0.1;
-    key.shadow.camera.far = 30;
-    key.shadow.camera.left = -6;
-    key.shadow.camera.right = 6;
-    key.shadow.camera.top = 6;
-    key.shadow.camera.bottom = -6;
+    key.shadow.camera.far = 25;
+    key.shadow.camera.left = -5;
+    key.shadow.camera.right = 5;
+    key.shadow.camera.top = 5;
+    key.shadow.camera.bottom = -5;
     scene.add(key);
-    const rim = new DirectionalLight(0x9b7bff, 2.35);
-    rim.position.set(-5, 3, -4);
+    const rim = new DirectionalLight(0x7b5cff, 3.2);
+    rim.position.set(-4, 2.5, -3.5);
     scene.add(rim);
+    const fill = new DirectionalLight(0x00d8e8, 1.4);
+    fill.position.set(0, 4, -5);
+    scene.add(fill);
 
-    const floorMaterial = new MeshStandardMaterial({ color: 0x171812, roughness: 0.64, metalness: 0.18 });
+    const floorMaterial = new MeshStandardMaterial({ color: 0x08080a, roughness: 0.35, metalness: 0.35 });
     const floor = new Mesh(new PlaneGeometry(30, 30), floorMaterial);
     floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.055;
+    floor.position.y = -0.02;
     floor.receiveShadow = true;
     scene.add(floor);
 
     const platform = new Mesh(
       new CylinderGeometry(2.5, 2.68, 0.10, 72),
-      new MeshStandardMaterial({ color: 0xb9b9ae, roughness: 0.34, metalness: 0.42 }),
+      new MeshStandardMaterial({ color: 0x0d0d10, roughness: 0.25, metalness: 0.55 }),
     );
-    platform.position.y = 0;
+    platform.position.y = 0.02;
     platform.receiveShadow = true;
     platform.castShadow = true;
     scene.add(platform);
 
     const platformBase = new Mesh(
       new CylinderGeometry(2.72, 2.72, 0.05, 72),
-      new MeshStandardMaterial({ color: 0x11120e, roughness: 0.46, metalness: 0.48 }),
+      new MeshStandardMaterial({ color: 0x050507, roughness: 0.3, metalness: 0.6 }),
     );
-    platformBase.position.y = -0.055;
+    platformBase.position.y = -0.02;
     platformBase.receiveShadow = true;
     scene.add(platformBase);
 
     const backWall = new Mesh(
       new PlaneGeometry(11, 5.6),
-      new MeshStandardMaterial({ color: 0x24251f, roughness: 0.88, metalness: 0.05 }),
+      new MeshStandardMaterial({ color: 0x0a0910, roughness: 0.85, metalness: 0.1 }),
     );
     backWall.position.set(0, 2.55, -4.35);
     backWall.receiveShadow = true;
     scene.add(backWall);
 
-    const stripMaterial = new MeshBasicMaterial({ color: 0xd9ffad });
+    const stripMaterial = new MeshBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.65 });
     for (const x of [-3.6, -2.4, -1.2, 0, 1.2, 2.4, 3.6]) {
       const strip = new Mesh(new BoxGeometry(0.055, 2.7, 0.035), stripMaterial);
       strip.position.set(x, 2.55, -4.25);
       scene.add(strip);
     }
 
-    const neonMaterial = new MeshBasicMaterial({ color: 0x8b5cff, transparent: true, opacity: 0.28, depthWrite: false });
+    const neonMaterial = new MeshBasicMaterial({ color: 0x7b5cff, transparent: true, opacity: 0.35, depthWrite: false });
     const neonPlane = new Mesh(new PlaneGeometry(4.9, 2.25), neonMaterial);
     neonPlane.rotation.x = -Math.PI / 2;
-    neonPlane.position.y = 0.018;
+    neonPlane.position.y = 0.05;
     scene.add(neonPlane);
 
-    const underglow = new PointLight(0x8b5cff, 2.2, 7, 2);
-    underglow.position.set(0, 0.42, 0);
+    const underglow = new PointLight(0x7b5cff, 3.5, 8, 2);
+    underglow.position.set(0, 0.5, 0);
     scene.add(underglow);
 
-    const headlightLeft = new PointLight(0xe8f6ff, 0, 8, 2);
+    const headlightLeft = new PointLight(0x88f0ff, 0, 10, 2);
     headlightLeft.position.set(2.7, 1, -0.62);
     scene.add(headlightLeft);
     const headlightRight = headlightLeft.clone();
@@ -546,9 +550,9 @@ export function VehicleModelViewer({
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.enablePan = false;
-    controls.minDistance = 3.6;
-    controls.maxDistance = 9.5;
-    controls.target.set(0, 0.82, 0);
+    controls.minDistance = 2.2;
+    controls.maxDistance = 7.5;
+    controls.target.set(0, 0.75, 0);
 
     let vehicleRoot: Object3D | null = null;
     let decalGroup: Group | null = null;
@@ -673,60 +677,77 @@ export function VehicleModelViewer({
       const token = wheelLoadToken;
       while (wheelGroup.children.length) wheelGroup.remove(wheelGroup.children[0]);
 
-      const loader = new GLTFLoader();
-      loader.setMeshoptDecoder(MeshoptDecoder);
-      loader.load(
-        NFS_WHEEL_PATHS[tuning.wheelStyle],
-        (gltf) => {
-          if (token !== wheelLoadToken || !wheelGroup) return;
-          cloneMaterials(gltf.scene);
-          gltf.scene.traverse((object) => {
-            if (!(object instanceof Mesh)) return;
-            const materials = Array.isArray(object.material) ? object.material : [object.material];
-            const darkInset = /_2$/i.test(object.name);
-            const midInset = /_1$/i.test(object.name);
-            for (const entry of materials) {
-              if (!(entry instanceof MeshStandardMaterial)) continue;
-              entry.color.set(darkInset ? 0x22262a : midInset ? 0x858b90 : 0xd8dde1);
-              entry.metalness = darkInset ? 0.5 : 0.92;
-              entry.roughness = darkInset ? 0.38 : 0.18;
-              entry.envMapIntensity = 1.65;
-            }
-          });
-          const wheelBox = new Box3().setFromObject(gltf.scene);
-          const size = wheelBox.getSize(new Vector3());
-          const radius = Math.max(size.y, size.z) / 2 || 1;
-          const baseScale = 0.285 / radius;
-          const mounts = [
-            { side: -1, z: UNO_WHEEL_MOUNTS.frontZ, key: "front_tires" },
-            { side: 1, z: UNO_WHEEL_MOUNTS.frontZ, key: "front_tires" },
-            { side: -1, z: UNO_WHEEL_MOUNTS.rearZ, key: "rear_tires" },
-            { side: 1, z: UNO_WHEEL_MOUNTS.rearZ, key: "rear_tires" },
-          ] as const;
-          for (const mount of mounts) {
-            const rimObject = gltf.scene.clone(true);
-            const mirror = mount.side > 0 ? -1 : 1;
-            rimObject.name = `NFS_RIM_${tuning.wheelStyle.toUpperCase()}_${mount.key}_${mount.side > 0 ? "RIGHT" : "LEFT"}`;
-            rimObject.position.set(mount.side * UNO_WHEEL_MOUNTS.rimTrackHalf, UNO_WHEEL_MOUNTS.wheelY, mount.z);
-            rimObject.scale.set(
-              baseScale * tuningRef.current.wheelScale * mirror,
-              baseScale * tuningRef.current.wheelScale,
-              baseScale * tuningRef.current.wheelScale,
-            );
-            rimObject.userData.partKey = mount.key;
-            rimObject.userData.__clouvaRimBaseScale = baseScale;
-            rimObject.userData.__clouvaRimMirror = mirror;
-            rimObject.traverse((child) => {
-              child.userData.partKey = child.userData.partKey || mount.key;
-              if (child instanceof Mesh) {
-                child.castShadow = true;
-                child.receiveShadow = true;
+const loader = new GLTFLoader();
+          loader.setMeshoptDecoder(MeshoptDecoder);
+          loader.load(
+            NFS_WHEEL_PATHS[tuning.wheelStyle],
+            (gltf) => {
+              if (token !== wheelLoadToken || !wheelGroup) return;
+              cloneMaterials(gltf.scene);
+              gltf.scene.traverse((object) => {
+                if (!(object instanceof Mesh)) return;
+                const materials = Array.isArray(object.material) ? object.material : [object.material];
+                const darkInset = /_2$/i.test(object.name);
+                const midInset = /_1$/i.test(object.name);
+                for (const entry of materials) {
+                  if (!(entry instanceof MeshStandardMaterial)) continue;
+                  entry.color.set(darkInset ? 0x22262a : midInset ? 0x858b90 : 0xd8dde1);
+                  entry.metalness = darkInset ? 0.5 : 0.92;
+                  entry.roughness = darkInset ? 0.38 : 0.18;
+                  entry.envMapIntensity = 1.65;
+                }
+              });
+              const wheelBox = new Box3().setFromObject(gltf.scene);
+              const size = wheelBox.getSize(new Vector3());
+              const radius = Math.max(size.y, size.z) / 2 || 1;
+              const baseScale = 0.285 / radius;
+              const tireRadius = 0.31;
+              const tireWidth = 0.24;
+              const mounts = [
+                { side: -1, z: UNO_WHEEL_MOUNTS.frontZ, key: "front_tires" },
+                { side: 1, z: UNO_WHEEL_MOUNTS.frontZ, key: "front_tires" },
+                { side: -1, z: UNO_WHEEL_MOUNTS.rearZ, key: "rear_tires" },
+                { side: 1, z: UNO_WHEEL_MOUNTS.rearZ, key: "rear_tires" },
+              ] as const;
+              for (const mount of mounts) {
+                const rimObject = gltf.scene.clone(true);
+                const mirror = mount.side > 0 ? -1 : 1;
+                rimObject.name = `NFS_RIM_${tuning.wheelStyle.toUpperCase()}_${mount.key}_${mount.side > 0 ? "RIGHT" : "LEFT"}`;
+                rimObject.position.set(mount.side * UNO_WHEEL_MOUNTS.rimTrackHalf, UNO_WHEEL_MOUNTS.wheelY, mount.z);
+                rimObject.scale.set(
+                  baseScale * tuningRef.current.wheelScale * mirror,
+                  baseScale * tuningRef.current.wheelScale,
+                  baseScale * tuningRef.current.wheelScale,
+                );
+                rimObject.userData.partKey = mount.key;
+                rimObject.userData.__clouvaRimBaseScale = baseScale;
+                rimObject.userData.__clouvaRimMirror = mirror;
+                rimObject.traverse((child) => {
+                  child.userData.partKey = child.userData.partKey || mount.key;
+                  if (child instanceof Mesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                  }
+                });
+                wheelGroup.add(rimObject);
+
+                const tireGeo = new CylinderGeometry(tireRadius, tireRadius, tireWidth, 32);
+                const tireMat = new MeshStandardMaterial({ color: 0x0a0a0c, roughness: 0.9, metalness: 0.02 });
+                const tire = new Mesh(tireGeo, tireMat);
+                tire.name = `NFS_TIRE_${mount.key}_${mount.side > 0 ? "RIGHT" : "LEFT"}`;
+                tire.rotation.x = Math.PI / 2;
+                tire.position.set(mount.side * UNO_WHEEL_MOUNTS.rimTrackHalf, UNO_WHEEL_MOUNTS.wheelY, mount.z);
+                tire.scale.set(tuningRef.current.wheelScale, tuningRef.current.wheelScale, tuningRef.current.wheelScale);
+                tire.userData.partKey = mount.key;
+                tire.userData.tuningRole = "wheel";
+                tire.userData.__clouvaTire = true;
+                tire.userData.__clouvaBaseScale = new Vector3(tuningRef.current.wheelScale, tuningRef.current.wheelScale, tuningRef.current.wheelScale);
+                tire.castShadow = true;
+                tire.receiveShadow = true;
+                wheelGroup.add(tire);
               }
-            });
-            wheelGroup.add(rimObject);
-          }
-        },
-      );
+            },
+          );
     };
 
     const addRoot = (root: Object3D) => {
@@ -839,8 +860,8 @@ export function VehicleModelViewer({
         neonMaterial.color.set(tuning.neonColor);
         underglow.color.set(tuning.neonColor);
         controls.autoRotate = tuning.autoRotate || liveShow;
-        headlightLeft.intensity = tuning.headlights ? 1.8 : 0;
-        headlightRight.intensity = tuning.headlights ? 1.8 : 0;
+        headlightLeft.intensity = tuning.headlights ? 2.5 : 0;
+        headlightRight.intensity = tuning.headlights ? 2.5 : 0;
       }
 
       if (sceneSignature !== lastScene) {
@@ -858,11 +879,11 @@ export function VehicleModelViewer({
           rim.color.set(0xa38cff);
           floorMaterial.color.set(0x030304);
         } else {
-          scene.background = new Color(0x14150f);
-          scene.fog = new FogExp2(0x14150f, 0.018);
-          hemi.color.set(0xe7edd7);
-          rim.color.set(0xb9ff62);
-          floorMaterial.color.set(0x171812);
+          scene.background = new Color(0x05040a);
+          scene.fog = new FogExp2(0x05040a, 0.025);
+          hemi.color.set(0x8ab4ff);
+          rim.color.set(0x9b7bff);
+          floorMaterial.color.set(0x08080a);
         }
       }
 
@@ -902,8 +923,8 @@ export function VehicleModelViewer({
       neonPlane.visible = tuning.neonEnabled;
       underglow.visible = tuning.neonEnabled;
       underglow.intensity = neonBase * (1.35 + mid * show.midGlow * 4.2 + treble * show.trebleFlash * 2.1);
-      rim.intensity = 2.35 + (liveShow ? treble * show.trebleFlash * 4.5 : 0);
-      key.intensity = 3.6 + (liveShow ? bands.overall * 1.8 : 0);
+      rim.intensity = 3.2 + (liveShow ? treble * show.trebleFlash * 4.5 : 0);
+      key.intensity = 4.2 + (liveShow ? bands.overall * 1.8 : 0);
       const targetFov = 42 - (liveShow ? bass * show.cameraPulse * 3.4 : 0);
       if (Math.abs(camera.fov - targetFov) > 0.015) {
         camera.fov += (targetFov - camera.fov) * 0.16;

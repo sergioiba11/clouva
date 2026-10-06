@@ -480,9 +480,9 @@ export default function VehiclePage() {
   const vehicleModelName = builtinModel?.name ?? data.model3d?.asset?.name ?? null;
 
   return (
-    <main className="min-h-screen bg-[#05040a] pb-28 text-white">
+    <main className="min-h-screen bg-[#05040a] pb-28 text-white overflow-x-hidden">
       <MainNav />
-      <div className="mx-auto max-w-7xl px-3 py-4 sm:px-7 sm:py-7">
+      <div className="mx-auto max-w-7xl px-3 py-4 sm:px-4 sm:py-5 w-full box-border">
         <header className="flex items-center gap-3 px-1 py-2">
           <Link href="/auto" className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/[0.04]"><ArrowLeft size={18} /></Link>
           <div className="min-w-0 flex-1"><p className="truncate text-lg font-semibold">{vehicleTitle}</p><p className="truncate text-xs text-white/38">{data.vehicle.make} {data.vehicle.model}{data.vehicle.version ? ` · ${data.vehicle.version}` : ""}{data.vehicle.year ? ` · ${data.vehicle.year}` : ""}</p></div>
@@ -493,7 +493,7 @@ export default function VehiclePage() {
 
         {tab === "garage" ? (
           <>
-            <section className="relative mt-2 h-[44dvh] min-h-[330px] max-h-[560px] overflow-hidden rounded-[30px] border border-white/[0.08] bg-[#08070c]">
+            <section className="relative mt-2 h-[58dvh] min-h-[380px] max-h-[620px] overflow-hidden rounded-[30px] border border-white/[0.08] bg-[#08070c]">
               <VehicleModelViewer
                 vehicleId={vehicleId}
                 modelUrl={vehicleModelUrl}
@@ -606,7 +606,7 @@ export default function VehiclePage() {
         ) : null}
       </div>
 
-      <nav className="fixed bottom-3 left-1/2 z-40 flex w-[calc(100%-24px)] max-w-3xl -translate-x-1/2 items-center justify-start gap-1 overflow-x-auto rounded-[22px] border border-white/10 bg-[#0c0912]/95 p-1.5 shadow-2xl backdrop-blur-xl [scrollbar-width:none] sm:justify-around">
+      <nav className="fixed bottom-3 left-1/2 z-40 flex w-full max-w-[calc(100%-24px)] max-w-3xl -translate-x-1/2 items-center justify-start gap-1 overflow-x-auto rounded-[22px] border border-white/10 bg-[#0c0912]/95 p-1.5 shadow-2xl backdrop-blur-xl [scrollbar-width:none] sm:justify-around px-2">
         {([
           ["garage", Car, "Auto"],
           ["tuning", Palette, "Tuning"],
