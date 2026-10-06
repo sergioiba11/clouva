@@ -23,7 +23,7 @@ function normalize(value: string | null | undefined) {
 
 const FIAT_UNO_SX: BuiltinVehicleModel = {
   id: "fiat-uno-sx-minimods",
-  name: "Fiat Uno SX · MiniMods",
+  name: "EL UNITO · BAJOCERO-Z",
   modelUrl: "/models/vehicles/fiat-uno-sx-minimods.glb",
   representationLevel: 4,
   partMeshMap: {

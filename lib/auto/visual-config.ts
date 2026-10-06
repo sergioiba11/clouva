@@ -1,4 +1,15 @@
 export type VehicleScenePreset = "underground" | "ice" | "blackout";
+export type VehicleDecalPreset =
+  | "none"
+  | "bajoceroz"
+  | "locodanisonido"
+  | "elunito"
+  | "nfs_audiobahn"
+  | "nfs_scorpion"
+  | "nfs_japanrobo"
+  | "nfs_lightning45"
+  | "nfs_wild59"
+  | "custom";
 
 export type VehicleTuningConfig = {
   bodyColor: string;
@@ -10,6 +21,18 @@ export type VehicleTuningConfig = {
   neonColor: string;
   neonIntensity: number;
   autoRotate: boolean;
+  bodyKit: number;
+  widebody: number;
+  hoodStyle: number;
+  hoodCarbon: boolean;
+  spoilerStyle: number;
+  spoilerCarbon: boolean;
+  audioTrunkOpen: boolean;
+  decalPreset: VehicleDecalPreset;
+  customDecalMediaId: string | null;
+  decalScale: number;
+  decalOffsetY: number;
+  decalOffsetZ: number;
 };
 
 export type VehicleShowConfig = {
@@ -32,6 +55,18 @@ export const DEFAULT_VEHICLE_TUNING: VehicleTuningConfig = {
   neonColor: "#8b5cff",
   neonIntensity: 1.15,
   autoRotate: false,
+  bodyKit: 0,
+  widebody: 0,
+  hoodStyle: 0,
+  hoodCarbon: false,
+  spoilerStyle: 0,
+  spoilerCarbon: false,
+  audioTrunkOpen: false,
+  decalPreset: "bajoceroz",
+  customDecalMediaId: null,
+  decalScale: 1,
+  decalOffsetY: 0,
+  decalOffsetZ: 0,
 };
 
 export const DEFAULT_VEHICLE_SHOW: VehicleShowConfig = {
@@ -75,6 +110,30 @@ export function normalizeVehicleTuning(value: unknown): VehicleTuningConfig {
     neonColor: color(data.neonColor, DEFAULT_VEHICLE_TUNING.neonColor),
     neonIntensity: numberIn(data.neonIntensity, DEFAULT_VEHICLE_TUNING.neonIntensity, 0, 3),
     autoRotate: bool(data.autoRotate, DEFAULT_VEHICLE_TUNING.autoRotate),
+    bodyKit: Math.round(numberIn(data.bodyKit, DEFAULT_VEHICLE_TUNING.bodyKit, 0, 1)),
+    widebody: Math.round(numberIn(data.widebody, DEFAULT_VEHICLE_TUNING.widebody, 0, 3)),
+    hoodStyle: Math.round(numberIn(data.hoodStyle, DEFAULT_VEHICLE_TUNING.hoodStyle, 0, 10)),
+    hoodCarbon: bool(data.hoodCarbon, DEFAULT_VEHICLE_TUNING.hoodCarbon),
+    spoilerStyle: Math.round(numberIn(data.spoilerStyle, DEFAULT_VEHICLE_TUNING.spoilerStyle, 0, 40)),
+    spoilerCarbon: bool(data.spoilerCarbon, DEFAULT_VEHICLE_TUNING.spoilerCarbon),
+    audioTrunkOpen: bool(data.audioTrunkOpen, DEFAULT_VEHICLE_TUNING.audioTrunkOpen),
+    decalPreset:
+      data.decalPreset === "none"
+      || data.decalPreset === "bajoceroz"
+      || data.decalPreset === "locodanisonido"
+      || data.decalPreset === "elunito"
+      || data.decalPreset === "nfs_audiobahn"
+      || data.decalPreset === "nfs_scorpion"
+      || data.decalPreset === "nfs_japanrobo"
+      || data.decalPreset === "nfs_lightning45"
+      || data.decalPreset === "nfs_wild59"
+      || data.decalPreset === "custom"
+        ? data.decalPreset
+        : DEFAULT_VEHICLE_TUNING.decalPreset,
+    customDecalMediaId: typeof data.customDecalMediaId === "string" && data.customDecalMediaId.trim() ? data.customDecalMediaId.trim().slice(0, 80) : null,
+    decalScale: numberIn(data.decalScale, DEFAULT_VEHICLE_TUNING.decalScale, 0.45, 2.2),
+    decalOffsetY: numberIn(data.decalOffsetY, DEFAULT_VEHICLE_TUNING.decalOffsetY, -0.45, 0.45),
+    decalOffsetZ: numberIn(data.decalOffsetZ, DEFAULT_VEHICLE_TUNING.decalOffsetZ, -0.8, 0.8),
   };
 }
 

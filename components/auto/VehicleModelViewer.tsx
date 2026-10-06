@@ -2,11 +2,14 @@
 
 import { useEffect, useRef } from "react";
 import {
+  ACESFilmicToneMapping,
   Box3,
   BoxGeometry,
+  CanvasTexture,
   Color,
   CylinderGeometry,
   DirectionalLight,
+  DoubleSide,
   FogExp2,
   Group,
   HemisphereLight,
@@ -15,18 +18,23 @@ import {
   MeshStandardMaterial,
   Object3D,
   PerspectiveCamera,
+  PCFSoftShadowMap,
+  PMREMGenerator,
   PlaneGeometry,
   PointLight,
   Raycaster,
   Scene,
   SRGBColorSpace,
+  TextureLoader,
   Vector2,
   Vector3,
   WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import {
   DEFAULT_VEHICLE_SHOW,
   DEFAULT_VEHICLE_TUNING,
@@ -35,6 +43,7 @@ import {
 } from "@/lib/auto/visual-config";
 
 type Props = {
+  vehicleId?: string | null;
   modelUrl?: string | null;
   partMeshMap?: Record<string, unknown> | null;
   selectedPartKey?: string | null;
@@ -174,6 +183,164 @@ function restoreNfsMountPoints(root: Object3D) {
   }
 }
 
+function makeTextDecalTexture(label: string) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1536;
+  canvas.height = 384;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  const gradient = context.createLinearGradient(0, 0, canvas.width, 0);
+  gradient.addColorStop(0, "#ffffff");
+  gradient.addColorStop(0.55, "#d7ccff");
+  gradient.addColorStop(1, "#8b5cff");
+  context.font = "900 210px Arial Black, Impact, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.lineJoin = "round";
+  context.strokeStyle = "rgba(7,5,12,.96)";
+  context.lineWidth = 30;
+  context.strokeText(label, canvas.width / 2, canvas.height / 2 + 8);
+  context.fillStyle = gradient;
+  context.fillText(label, canvas.width / 2, canvas.height / 2 + 8);
+
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createSideDecals(root: Object3D) {
+  const group = new Group();
+  group.name = "CLOUVA_DECALS";
+  const geometry = new PlaneGeometry(1.72, 0.42);
+  for (const side of [-1, 1] as const) {
+    const material = new MeshBasicMaterial({
+      transparent: true,
+      depthWrite: false,
+      side: DoubleSide,
+      opacity: 0.98,
+    });
+    const decal = new Mesh(geometry, material);
+    decal.name = side < 0 ? "CLOUVA_DECAL_LEFT" : "CLOUVA_DECAL_RIGHT";
+    decal.position.set(side * 0.802, 0.68, 0.16);
+    decal.rotation.y = side < 0 ? Math.PI / 2 : -Math.PI / 2;
+    decal.renderOrder = 9;
+    group.add(decal);
+  }
+  root.add(group);
+  return group;
+}
+
+function createAudioSetup(root: Object3D) {
+  const group = new Group();
+  group.name = "LOCODANISONIDO_AUDIO";
+  group.visible = false;
+
+  const enclosure = new Mesh(
+    new BoxGeometry(1.28, 0.54, 0.34),
+    new MeshStandardMaterial({ color: 0x09090d, roughness: 0.52, metalness: 0.28 }),
+  );
+  enclosure.position.set(0, 0.52, 1.48);
+  enclosure.castShadow = true;
+  enclosure.receiveShadow = true;
+  group.add(enclosure);
+
+  for (const x of [-0.34, 0.34]) {
+    const speaker = new Mesh(
+      new CylinderGeometry(0.22, 0.22, 0.095, 36),
+      new MeshStandardMaterial({ color: 0x111118, roughness: 0.72, metalness: 0.2 }),
+    );
+    speaker.rotation.x = Math.PI / 2;
+    speaker.position.set(x, 0.56, 1.69);
+    speaker.castShadow = true;
+    group.add(speaker);
+
+    const cone = new Mesh(
+      new CylinderGeometry(0.12, 0.18, 0.035, 36),
+      new MeshStandardMaterial({ color: 0x252435, roughness: 0.5, metalness: 0.3 }),
+    );
+    cone.rotation.x = Math.PI / 2;
+    cone.position.set(x, 0.56, 1.75);
+    group.add(cone);
+  }
+
+  const logoTexture = makeTextDecalTexture("LOCODANISONIDO");
+  const logo = new Mesh(
+    new PlaneGeometry(1.02, 0.18),
+    new MeshBasicMaterial({ map: logoTexture, transparent: true, depthWrite: false, side: DoubleSide }),
+  );
+  logo.position.set(0, 0.27, 1.665);
+  logo.renderOrder = 10;
+  group.add(logo);
+
+  root.add(group);
+  return group;
+}
+
+function setNfsVariantVisibility(root: Object3D, tuning: VehicleTuningConfig) {
+  if (!root.getObjectByName("UNO_BASE_A")) return;
+
+  const bodyKit = Math.max(0, Math.min(1, Math.round(tuning.bodyKit)));
+  const widebody = Math.max(0, Math.min(3, Math.round(tuning.widebody)));
+  const hoodStyle = Math.max(0, Math.min(10, Math.round(tuning.hoodStyle)));
+  const spoilerStyle = Math.max(0, Math.min(40, Math.round(tuning.spoilerStyle)));
+
+  root.traverse((object) => {
+    const name = object.name.toUpperCase();
+    if (!name) return;
+
+    if (name === "UNO_KIT00_TRUNK_A") {
+      object.visible = !tuning.audioTrunkOpen;
+      return;
+    }
+
+    const stockKit = name.match(/^UNO_KIT00_(FRONT_BUMPER|REAR_BUMPER|SKIRT)_A$/);
+    if (stockKit) {
+      object.visible = widebody === 0 && bodyKit === 0;
+      return;
+    }
+
+    const customKit = name.match(/^UNO_KIT01_(FRONT_BUMPER|REAR_BUMPER|SKIRT)_A$/);
+    if (customKit) {
+      object.visible = widebody === 0 && bodyKit === 1;
+      return;
+    }
+
+    if (name === "UNO_KIT00_BODY_A") {
+      object.visible = widebody === 0;
+      return;
+    }
+
+    const wideMatch = name.match(/^UNO_KITW0([1-3])_BODY_A$/);
+    if (wideMatch) {
+      object.visible = Number(wideMatch[1]) === widebody;
+      return;
+    }
+
+    if (name === "UNO_KIT00_HOOD_A") {
+      object.visible = hoodStyle === 0 && !tuning.hoodCarbon;
+      return;
+    }
+
+    const hoodMatch = name.match(/^UNO_STYLE(\d{2})_HOOD(_CF)?_A$/);
+    if (hoodMatch) {
+      const style = Number(hoodMatch[1]);
+      const carbon = Boolean(hoodMatch[2]);
+      object.visible = style === hoodStyle && carbon === tuning.hoodCarbon;
+      return;
+    }
+
+    const spoilerMatch = name.match(/^SPOILER_STYLE(\d{2})(_CF)?_A$/);
+    if (spoilerMatch) {
+      const style = Number(spoilerMatch[1]);
+      const carbon = Boolean(spoilerMatch[2]);
+      object.visible = spoilerStyle > 0 && style === spoilerStyle && carbon === tuning.spoilerCarbon;
+    }
+  });
+}
+
 function inferTuningRole(object: Object3D) {
   if (typeof object.userData.tuningRole === "string") return object.userData.tuningRole as string;
   const key = typeof object.userData.partKey === "string" ? object.userData.partKey : "";
@@ -181,13 +348,15 @@ function inferTuningRole(object: Object3D) {
   if (key === "front_tires" || key === "rear_tires" || /(wheel|rim|tire|tyre|llanta|rueda)/.test(name)) return "wheel";
   if (key === "headlights" || /(headlight|headlamp|optica|light_front)/.test(name)) return "headlight";
   if (/(glass|window|windshield|windscreen|parabris|ventana)/.test(name)) return "glass";
-  if (key === "body" || key === "front_bumper" || /(body|paint|shell|carrocer|bumper|hood|bonnet|fender|door)/.test(name)) return "body";
+  if (key === "body" || key === "front_bumper" || /(body|paint|shell|carrocer|bumper|hood|bonnet|fender|door|skirt|spoiler|trunk)/.test(name)) return "body";
   return null;
 }
 
 function cloneMaterials(root: Object3D) {
   root.traverse((object) => {
     if (!(object instanceof Mesh)) return;
+    object.castShadow = true;
+    object.receiveShadow = true;
     if (Array.isArray(object.material)) object.material = object.material.map((entry) => entry.clone());
     else object.material = object.material.clone();
     object.userData.__clouvaBaseScale = object.scale.clone();
@@ -222,6 +391,7 @@ function readAudioBands(analyser: AnalyserNode | null, cache: { values: Uint8Arr
 }
 
 export function VehicleModelViewer({
+  vehicleId,
   modelUrl,
   partMeshMap,
   selectedPartKey,
@@ -261,6 +431,13 @@ export function VehicleModelViewer({
     const renderer = new WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.outputColorSpace = SRGBColorSpace;
+    renderer.toneMapping = ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.18;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = PCFSoftShadowMap;
+    const pmrem = new PMREMGenerator(renderer);
+    const environment = pmrem.fromScene(new RoomEnvironment(), 0.04);
+    scene.environment = environment.texture;
     renderer.domElement.style.width = "100%";
     renderer.domElement.style.height = "100%";
     renderer.domElement.style.touchAction = "none";
@@ -268,10 +445,19 @@ export function VehicleModelViewer({
 
     const hemi = new HemisphereLight(0xb7c8ff, 0x140d1e, 2.4);
     scene.add(hemi);
-    const key = new DirectionalLight(0xffffff, 3.1);
+    const key = new DirectionalLight(0xffffff, 3.6);
     key.position.set(4, 7, 5);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.bias = -0.00025;
+    key.shadow.camera.near = 0.1;
+    key.shadow.camera.far = 30;
+    key.shadow.camera.left = -6;
+    key.shadow.camera.right = 6;
+    key.shadow.camera.top = 6;
+    key.shadow.camera.bottom = -6;
     scene.add(key);
-    const rim = new DirectionalLight(0x9b7bff, 2.1);
+    const rim = new DirectionalLight(0x9b7bff, 2.35);
     rim.position.set(-5, 3, -4);
     scene.add(rim);
 
@@ -279,6 +465,7 @@ export function VehicleModelViewer({
     const floor = new Mesh(new PlaneGeometry(30, 30), floorMaterial);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = 0;
+    floor.receiveShadow = true;
     scene.add(floor);
 
     const neonMaterial = new MeshBasicMaterial({ color: 0x8b5cff, transparent: true, opacity: 0.28, depthWrite: false });
@@ -306,16 +493,120 @@ export function VehicleModelViewer({
     controls.target.set(0, 0.85, 0);
 
     let vehicleRoot: Object3D | null = null;
+    let decalGroup: Group | null = null;
+    let audioGroup: Group | null = null;
     let baseRootY = 0;
     let lastTuning = "";
     let lastScene = "";
+    let lastDecalSignature = "";
+    let decalLoadToken = 0;
     const audioCache: { values: Uint8Array<ArrayBuffer> | null } = { values: null };
+
+    const applyDecalTexture = (texture: CanvasTexture | ReturnType<TextureLoader["load"]> | null, visible = true) => {
+      if (!decalGroup) return;
+      decalGroup.visible = visible;
+      decalGroup.traverse((object) => {
+        if (!(object instanceof Mesh)) return;
+        const material = object.material;
+        if (!(material instanceof MeshBasicMaterial)) return;
+        if (material.map && material.map !== texture) material.map.dispose();
+        material.map = texture;
+        material.needsUpdate = true;
+      });
+    };
+
+    const updateDecals = async (tuning: VehicleTuningConfig) => {
+      if (!decalGroup) return;
+      const signature = [
+        tuning.decalPreset,
+        tuning.customDecalMediaId || "",
+        tuning.decalScale,
+        tuning.decalOffsetY,
+        tuning.decalOffsetZ,
+        tuning.widebody,
+      ].join(":");
+      if (signature === lastDecalSignature) return;
+      lastDecalSignature = signature;
+      decalLoadToken += 1;
+      const token = decalLoadToken;
+
+      decalGroup.scale.setScalar(tuning.decalScale);
+      decalGroup.position.y = tuning.decalOffsetY;
+      decalGroup.position.z = tuning.decalOffsetZ;
+      const decalHalfWidth = tuning.widebody > 0 ? 0.91 : 0.802;
+      decalGroup.children.forEach((child) => {
+        if (child.name.endsWith("_LEFT")) child.position.x = -decalHalfWidth;
+        if (child.name.endsWith("_RIGHT")) child.position.x = decalHalfWidth;
+      });
+
+      if (tuning.decalPreset === "none") {
+        applyDecalTexture(null, false);
+        return;
+      }
+
+      if (tuning.decalPreset === "custom" && tuning.customDecalMediaId && vehicleId) {
+        try {
+          const response = await authenticatedFetch(
+            `/api/auto/${vehicleId}/media?mediaId=${encodeURIComponent(tuning.customDecalMediaId)}`,
+          );
+          if (!response.ok) throw new Error("No se pudo cargar la pegatina.");
+          const blob = await response.blob();
+          const objectUrl = URL.createObjectURL(blob);
+          const texture = await new Promise<ReturnType<TextureLoader["load"]>>((resolve, reject) => {
+            new TextureLoader().load(objectUrl, resolve, undefined, reject);
+          });
+          URL.revokeObjectURL(objectUrl);
+          if (token !== decalLoadToken) {
+            texture.dispose();
+            return;
+          }
+          texture.colorSpace = SRGBColorSpace;
+          applyDecalTexture(texture, true);
+          return;
+        } catch {
+          if (token !== decalLoadToken) return;
+        }
+      }
+
+      const nfsVinylPath: Partial<Record<VehicleTuningConfig["decalPreset"], string>> = {
+        nfs_audiobahn: "/models/vehicles/fiat-uno-vinyls/audiobahn.png",
+        nfs_scorpion: "/models/vehicles/fiat-uno-vinyls/scorpion.png",
+        nfs_japanrobo: "/models/vehicles/fiat-uno-vinyls/japanrobo.png",
+        nfs_lightning45: "/models/vehicles/fiat-uno-vinyls/lightning45.png",
+        nfs_wild59: "/models/vehicles/fiat-uno-vinyls/wild59.png",
+      };
+      const presetPath = nfsVinylPath[tuning.decalPreset];
+      if (presetPath) {
+        const texture = await new Promise<ReturnType<TextureLoader["load"]>>((resolve, reject) => {
+          new TextureLoader().load(presetPath, resolve, undefined, reject);
+        });
+        if (token !== decalLoadToken) {
+          texture.dispose();
+          return;
+        }
+        texture.colorSpace = SRGBColorSpace;
+        applyDecalTexture(texture, true);
+        return;
+      }
+
+      const label = tuning.decalPreset === "locodanisonido"
+        ? "LOCODANISONIDO"
+        : tuning.decalPreset === "elunito"
+          ? "EL UNITO"
+          : "BAJOCERO-Z";
+      applyDecalTexture(makeTextDecalTexture(label), true);
+    };
 
     const addRoot = (root: Object3D) => {
       cloneMaterials(root);
       vehicleRoot = root;
+      const isUnoAsset = Boolean(root.getObjectByName("UNO_BASE_A"));
+      decalGroup = isUnoAsset ? createSideDecals(root) : null;
+      audioGroup = isUnoAsset ? createAudioSetup(root) : null;
+      if (audioGroup) audioGroup.visible = tuningRef.current.audioTrunkOpen;
       baseRootY = root.position.y;
       scene.add(root);
+      void updateDecals(tuningRef.current);
     };
 
     if (modelUrl) {
@@ -373,6 +664,9 @@ export function VehicleModelViewer({
 
       if (vehicleRoot && tuningSignature !== lastTuning) {
         lastTuning = tuningSignature;
+        setNfsVariantVisibility(vehicleRoot, tuning);
+        if (audioGroup) audioGroup.visible = tuning.audioTrunkOpen;
+        void updateDecals(tuning);
         vehicleRoot.traverse((object) => {
           if (!(object instanceof Mesh)) return;
           const role = typeof object.userData.tuningRole === "string" ? object.userData.tuningRole : inferTuningRole(object);
@@ -468,8 +762,8 @@ export function VehicleModelViewer({
       neonPlane.visible = tuning.neonEnabled;
       underglow.visible = tuning.neonEnabled;
       underglow.intensity = neonBase * (1.35 + mid * show.midGlow * 4.2 + treble * show.trebleFlash * 2.1);
-      rim.intensity = 2.1 + (liveShow ? treble * show.trebleFlash * 4.5 : 0);
-      key.intensity = 3.1 + (liveShow ? bands.overall * 1.8 : 0);
+      rim.intensity = 2.35 + (liveShow ? treble * show.trebleFlash * 4.5 : 0);
+      key.intensity = 3.6 + (liveShow ? bands.overall * 1.8 : 0);
       const targetFov = 42 - (liveShow ? bass * show.cameraPulse * 3.4 : 0);
       if (Math.abs(camera.fov - targetFov) > 0.015) {
         camera.fov += (targetFov - camera.fov) * 0.16;
@@ -494,10 +788,12 @@ export function VehicleModelViewer({
           materials.forEach((entry) => entry.dispose());
         }
       });
+      environment.dispose();
+      pmrem.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [modelUrl, partMeshMap]);
+  }, [modelUrl, partMeshMap, vehicleId]);
 
   return <div ref={hostRef} className={`h-full min-h-[300px] w-full overflow-hidden rounded-[26px] ${className}`} aria-label="Gemelo digital 3D del vehículo" />;
 }

@@ -158,6 +158,7 @@ export default function VehiclePage() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [uploadingDecal, setUploadingDecal] = useState(false);
   const [uploadingModel, setUploadingModel] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("garage");
@@ -373,6 +374,26 @@ export default function VehiclePage() {
     }
   }
 
+  async function uploadDecal(file: File): Promise<{ id: string }> {
+    setUploadingDecal(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      form.set("phase", "general");
+      form.set("caption", `Pegatina personalizada · ${file.name}`);
+      const response = await authenticatedFetch(`/api/auto/${vehicleId}/media`, { method: "POST", body: form });
+      const payload = await readApiJson<{ media: { id: string } }>(response);
+      return { id: payload.media.id };
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "No se pudo subir la pegatina.";
+      setError(message);
+      throw cause;
+    } finally {
+      setUploadingDecal(false);
+    }
+  }
+
   async function uploadModel3d(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -474,6 +495,7 @@ export default function VehiclePage() {
           <>
             <section className="relative mt-2 h-[44dvh] min-h-[330px] max-h-[560px] overflow-hidden rounded-[30px] border border-white/[0.08] bg-[#08070c]">
               <VehicleModelViewer
+                vehicleId={vehicleId}
                 modelUrl={vehicleModelUrl}
                 partMeshMap={vehiclePartMeshMap}
                 selectedPartKey={selectedPart?.key}
@@ -524,17 +546,21 @@ export default function VehiclePage() {
 
         {tab === "tuning" ? (
           <VehicleTuningStudio
+            vehicleId={vehicleId}
             vehicleName={vehicleTitle}
             modelUrl={vehicleModelUrl}
             partMeshMap={vehiclePartMeshMap}
             builds={data.builds}
             saving={saving}
+            uploadingDecal={uploadingDecal}
+            onUploadDecal={uploadDecal}
             onSave={saveVisualBuild}
           />
         ) : null}
 
         {tab === "show" ? (
           <VehicleShowStudio
+            vehicleId={vehicleId}
             vehicleName={vehicleTitle}
             modelUrl={vehicleModelUrl}
             partMeshMap={vehiclePartMeshMap}

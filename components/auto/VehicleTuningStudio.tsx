@@ -1,7 +1,7 @@
 "use client";
 
-import { Gauge, Lightbulb, Loader2, Palette, Plus, Rotate3D, Save, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Gauge, Lightbulb, Loader2, Palette, Plus, Rotate3D, Save, Sparkles, Upload } from "lucide-react";
+import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 import { VehicleModelViewer } from "@/components/auto/VehicleModelViewer";
 import {
   DEFAULT_VEHICLE_SHOW,
@@ -33,11 +33,14 @@ type SaveBuildInput = {
 };
 
 type Props = {
+  vehicleId: string;
   vehicleName: string;
   modelUrl?: string | null;
   partMeshMap?: Record<string, unknown> | null;
   builds: VehicleVisualBuild[];
   saving: boolean;
+  uploadingDecal: boolean;
+  onUploadDecal: (file: File) => Promise<{ id: string }>;
   onSave: (input: SaveBuildInput) => Promise<void>;
 };
 
@@ -45,7 +48,25 @@ function percent(value: number, min: number, max: number) {
   return Math.round(((value - min) / (max - min)) * 100);
 }
 
-export function VehicleTuningStudio({ vehicleName, modelUrl, partMeshMap, builds, saving, onSave }: Props) {
+const NFS_VINYLS: Array<{ value: VehicleTuningConfig["decalPreset"]; label: string; image: string }> = [
+  { value: "nfs_audiobahn", label: "AudioBahn", image: "/models/vehicles/fiat-uno-vinyls/audiobahn.png" },
+  { value: "nfs_scorpion", label: "Scorpion", image: "/models/vehicles/fiat-uno-vinyls/scorpion.png" },
+  { value: "nfs_japanrobo", label: "Japan Robo", image: "/models/vehicles/fiat-uno-vinyls/japanrobo.png" },
+  { value: "nfs_lightning45", label: "Lightning", image: "/models/vehicles/fiat-uno-vinyls/lightning45.png" },
+  { value: "nfs_wild59", label: "Wild 059", image: "/models/vehicles/fiat-uno-vinyls/wild59.png" },
+];
+
+export function VehicleTuningStudio({
+  vehicleId,
+  vehicleName,
+  modelUrl,
+  partMeshMap,
+  builds,
+  saving,
+  uploadingDecal,
+  onUploadDecal,
+  onSave,
+}: Props) {
   const active = useMemo(() => builds.find((build) => build.is_active) ?? builds[0] ?? null, [builds]);
   const [selectedBuildId, setSelectedBuildId] = useState<string | null>(active?.id ?? null);
   const selectedBuild = useMemo(
@@ -95,6 +116,22 @@ export function VehicleTuningStudio({ vehicleName, modelUrl, partMeshMap, builds
     setTuning((current) => ({ ...current, rideHeight: -0.12, wheelScale: 1.08, neonEnabled: true, neonIntensity: 1.9, autoRotate: true }));
   }
 
+  async function uploadCustomDecal(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const uploaded = await onUploadDecal(file);
+      setTuning((current) => ({
+        ...current,
+        decalPreset: "custom",
+        customDecalMediaId: uploaded.id,
+      }));
+      event.target.value = "";
+    } catch {
+      // The parent surface already exposes the upload error.
+    }
+  }
+
   async function save() {
     await onSave({
       buildId: selectedBuildId,
@@ -113,11 +150,11 @@ export function VehicleTuningStudio({ vehicleName, modelUrl, partMeshMap, builds
           <div>
             <div className="inline-flex items-center gap-2 text-violet-200">
               <Palette size={17} />
-              <span className="text-[10px] font-semibold uppercase tracking-[.17em]">Tuning Lab</span>
+              <span className="text-[10px] font-semibold uppercase tracking-[.17em]">BAJOCERO-Z · CUSTOM SHOP</span>
             </div>
             <h2 className="mt-2 text-3xl font-semibold tracking-tight">{vehicleName}</h2>
             <p className="mt-2 max-w-xl text-sm leading-6 text-white/42">
-              Armá versiones reales del auto y guardalas como builds. El mismo build alimenta el modo Show.
+              Personalizá EL UNITO con piezas reales del addon NFS, vinyls, pegatinas propias, altura, ruedas, luces y show.
             </p>
           </div>
           <button type="button" onClick={newBuild} className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs">
@@ -142,7 +179,7 @@ export function VehicleTuningStudio({ vehicleName, modelUrl, partMeshMap, builds
       </div>
 
       <div className="relative mt-4 h-[42dvh] min-h-[340px] max-h-[590px] overflow-hidden rounded-[30px] border border-white/[0.08] bg-[#08070c]">
-        <VehicleModelViewer modelUrl={modelUrl} partMeshMap={partMeshMap} tuningConfig={tuning} showConfig={show} />
+        <VehicleModelViewer vehicleId={vehicleId} modelUrl={modelUrl} partMeshMap={partMeshMap} tuningConfig={tuning} showConfig={show} />
         <div className="pointer-events-none absolute left-4 top-4 rounded-2xl border border-white/10 bg-black/55 px-3 py-2 backdrop-blur-md">
           <p className="text-[9px] uppercase tracking-[.16em] text-white/35">Build preview</p>
           <p className="mt-0.5 text-xs font-semibold">{name || "Build"}</p>
@@ -206,6 +243,100 @@ export function VehicleTuningStudio({ vehicleName, modelUrl, partMeshMap, builds
         </article>
       </div>
 
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <article className="rounded-[26px] border border-violet-300/15 bg-[linear-gradient(145deg,rgba(105,66,255,.12),rgba(8,7,13,.96))] p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div><p className="text-[10px] font-semibold uppercase tracking-[.18em] text-violet-200">Piezas NFS</p><p className="mt-1 text-xs text-white/42">Partes reales rescatadas del addon del Uno.</p></div>
+            <span className="rounded-full border border-violet-300/20 bg-violet-400/10 px-2.5 py-1 text-[9px] font-semibold text-violet-100">121 MESHES</span>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <label className="rounded-2xl border border-white/[0.07] bg-black/25 p-3 text-[11px] text-white/45">
+              Body kit
+              <select value={tuning.bodyKit} onChange={(event) => setTuning((current) => ({ ...current, bodyKit: Number(event.target.value) }))} className="mt-2 w-full rounded-xl border border-white/10 bg-[#0b0912] px-3 py-2.5 text-xs text-white outline-none">
+                <option value={0}>Stock</option><option value={1}>Kit 01</option>
+              </select>
+            </label>
+            <label className="rounded-2xl border border-white/[0.07] bg-black/25 p-3 text-[11px] text-white/45">
+              Widebody
+              <select value={tuning.widebody} onChange={(event) => setTuning((current) => ({ ...current, widebody: Number(event.target.value) }))} className="mt-2 w-full rounded-xl border border-white/10 bg-[#0b0912] px-3 py-2.5 text-xs text-white outline-none">
+                <option value={0}>Sin widebody</option><option value={1}>Wide 01</option><option value={2}>Wide 02</option><option value={3}>Wide 03</option>
+              </select>
+            </label>
+            <label className="rounded-2xl border border-white/[0.07] bg-black/25 p-3 text-[11px] text-white/45">
+              Capot
+              <select value={tuning.hoodStyle} onChange={(event) => setTuning((current) => ({ ...current, hoodStyle: Number(event.target.value) }))} className="mt-2 w-full rounded-xl border border-white/10 bg-[#0b0912] px-3 py-2.5 text-xs text-white outline-none">
+                {Array.from({ length: 11 }, (_, index) => <option key={index} value={index}>{index === 0 ? "Stock" : "Style " + String(index).padStart(2, "0")}</option>)}
+              </select>
+            </label>
+            <label className="rounded-2xl border border-white/[0.07] bg-black/25 p-3 text-[11px] text-white/45">
+              Spoiler
+              <select value={tuning.spoilerStyle} onChange={(event) => setTuning((current) => ({ ...current, spoilerStyle: Number(event.target.value) }))} className="mt-2 w-full rounded-xl border border-white/10 bg-[#0b0912] px-3 py-2.5 text-xs text-white outline-none">
+                <option value={0}>Sin spoiler</option>
+                {Array.from({ length: 40 }, (_, index) => <option key={index + 1} value={index + 1}>{"Style " + String(index + 1).padStart(2, "0")}</option>)}
+              </select>
+            </label>
+          </div>
+
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setTuning((current) => ({ ...current, hoodCarbon: !current.hoodCarbon }))} className={"rounded-2xl border px-3 py-3 text-xs " + (tuning.hoodCarbon ? "border-violet-300/30 bg-violet-400/10 text-violet-100" : "border-white/[0.07] bg-black/20 text-white/45")}>Capot carbono · {tuning.hoodCarbon ? "ON" : "OFF"}</button>
+            <button type="button" onClick={() => setTuning((current) => ({ ...current, spoilerCarbon: !current.spoilerCarbon }))} className={"rounded-2xl border px-3 py-3 text-xs " + (tuning.spoilerCarbon ? "border-violet-300/30 bg-violet-400/10 text-violet-100" : "border-white/[0.07] bg-black/20 text-white/45")}>Spoiler carbono · {tuning.spoilerCarbon ? "ON" : "OFF"}</button>
+          </div>
+          <button type="button" onClick={() => setTuning((current) => ({ ...current, audioTrunkOpen: !current.audioTrunkOpen }))} className={"mt-2 flex w-full items-center justify-between rounded-2xl border px-3 py-3 text-xs " + (tuning.audioTrunkOpen ? "border-violet-300/35 bg-violet-400/12 text-violet-100" : "border-white/[0.07] bg-black/20 text-white/50")}>
+            <span>Baúl LOCODANISONIDO · doble sub</span><strong>{tuning.audioTrunkOpen ? "ABIERTO" : "CERRADO"}</strong>
+          </button>
+        </article>
+
+        <article className="rounded-[26px] border border-violet-300/15 bg-[radial-gradient(circle_at_100%_0%,rgba(139,92,255,.18),transparent_42%),#0b0912] p-4">
+          <div className="flex items-center gap-2"><Sparkles size={15} className="text-violet-300" /><div><p className="text-xs font-semibold">Pegatinas / Vinyls</p><p className="mt-1 text-[10px] uppercase tracking-[.13em] text-white/30">BAJOCERO-Z · EL UNITO · LOCODANISONIDO</p></div></div>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            {[
+              ["bajoceroz", "BAJOCERO-Z"],
+              ["elunito", "EL UNITO"],
+              ["locodanisonido", "LOCODANISONIDO"],
+              ["none", "Sin pegatina"],
+            ].map(([value, label]) => (
+              <button key={value} type="button" onClick={() => setTuning((current) => ({ ...current, decalPreset: value as VehicleTuningConfig["decalPreset"] }))} className={"rounded-2xl border p-3 text-left text-xs font-semibold " + (tuning.decalPreset === value ? "border-violet-300/35 bg-violet-400/12 text-violet-100" : "border-white/[0.07] bg-black/20 text-white/48")}>{label}</button>
+            ))}
+          </div>
+
+          <p className="mt-4 text-[9px] font-semibold uppercase tracking-[.16em] text-white/30">Vinyls rescatados de NFS Underground 2</p>
+          <div className="mt-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
+            {NFS_VINYLS.map((vinyl) => (
+              <button
+                key={vinyl.value}
+                type="button"
+                onClick={() => setTuning((current) => ({ ...current, decalPreset: vinyl.value }))}
+                className={"relative h-20 w-28 shrink-0 overflow-hidden rounded-2xl border text-left " + (tuning.decalPreset === vinyl.value ? "border-violet-300/45 ring-1 ring-violet-300/20" : "border-white/[0.08]")}
+              >
+                <img src={vinyl.image} alt="" className="absolute inset-0 h-full w-full object-cover opacity-75" />
+                <span className="absolute inset-0 bg-gradient-to-t from-black via-black/15 to-transparent" />
+                <span className="absolute bottom-2 left-2 right-2 text-[10px] font-semibold text-white">{vinyl.label}</span>
+              </button>
+            ))}
+          </div>
+
+          <label className={"mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed px-3 py-3 text-xs " + (tuning.decalPreset === "custom" ? "border-violet-300/35 bg-violet-400/10 text-violet-100" : "border-white/10 bg-black/20 text-white/55")}>
+            {uploadingDecal ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
+            {uploadingDecal ? "Subiendo pegatina…" : "Subir PNG / JPG propio"}
+            <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" disabled={uploadingDecal} onChange={(event) => void uploadCustomDecal(event)} />
+          </label>
+
+          <label className="mt-4 block">
+            <span className="flex items-center justify-between text-[11px] text-white/48"><span>Tamaño pegatina</span><strong className="text-white/75">{Math.round(tuning.decalScale * 100)}%</strong></span>
+            <input type="range" min={0.45} max={2.2} step={0.05} value={tuning.decalScale} onChange={(event) => setTuning((current) => ({ ...current, decalScale: Number(event.target.value) }))} className="mt-2 w-full accent-violet-400" />
+          </label>
+          <label className="mt-3 block">
+            <span className="flex items-center justify-between text-[11px] text-white/48"><span>Mover adelante / atrás</span><strong className="text-white/75">{tuning.decalOffsetZ.toFixed(2)}</strong></span>
+            <input type="range" min={-0.8} max={0.8} step={0.02} value={tuning.decalOffsetZ} onChange={(event) => setTuning((current) => ({ ...current, decalOffsetZ: Number(event.target.value) }))} className="mt-2 w-full accent-violet-400" />
+          </label>
+          <label className="mt-3 block">
+            <span className="flex items-center justify-between text-[11px] text-white/48"><span>Mover arriba / abajo</span><strong className="text-white/75">{tuning.decalOffsetY.toFixed(2)}</strong></span>
+            <input type="range" min={-0.45} max={0.45} step={0.02} value={tuning.decalOffsetY} onChange={(event) => setTuning((current) => ({ ...current, decalOffsetY: Number(event.target.value) }))} className="mt-2 w-full accent-violet-400" />
+          </label>
+        </article>
+      </div>
+
       <div className="mt-3 grid grid-cols-3 gap-2">
         <button type="button" onClick={() => applyPreset("street")} className="rounded-2xl border border-white/[0.07] bg-[#0b0912] px-3 py-3 text-xs"><Gauge size={14} className="mx-auto mb-1.5 text-white/45" /> Street</button>
         <button type="button" onClick={() => applyPreset("low")} className="rounded-2xl border border-white/[0.07] bg-[#0b0912] px-3 py-3 text-xs"><Sparkles size={14} className="mx-auto mb-1.5 text-white/45" /> Low</button>
@@ -214,7 +345,7 @@ export function VehicleTuningStudio({ vehicleName, modelUrl, partMeshMap, builds
 
       <div className="mt-4 rounded-[24px] border border-white/[0.07] bg-[#0b0912] p-4">
         <label className="text-[10px] uppercase tracking-[.14em] text-white/35">Nombre del build</label>
-        <input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder="Ej. Dani Night Build" className="mt-2 w-full rounded-xl border border-white/10 bg-black/25 px-3 py-3 text-sm outline-none focus:border-violet-300/35" />
+        <input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder="Ej. EL UNITO · Night Build" className="mt-2 w-full rounded-xl border border-white/10 bg-black/25 px-3 py-3 text-sm outline-none focus:border-violet-300/35" />
         <button type="button" disabled={saving} onClick={() => void save()} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-500 px-5 py-3.5 font-semibold disabled:opacity-50">
           {saving ? <Loader2 size={17} className="animate-spin" /> : <Save size={17} />} Guardar y usar este build
         </button>

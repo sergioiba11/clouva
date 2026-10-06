@@ -17,6 +17,50 @@ function extensionFor(file: File) {
   return "jpg";
 }
 
+export async function GET(request: NextRequest, context: { params: Promise<{ vehicleId: string }> }) {
+  try {
+    const { vehicleId } = await context.params;
+    const { user } = await requireUser(request);
+    const admin = createAdminSupabase();
+    const access = await requireVehicleAccess(admin, user, vehicleId);
+    const mediaId = asText(request.nextUrl.searchParams.get("mediaId"), 80);
+    if (!mediaId) return NextResponse.json({ error: "Falta la imagen." }, { status: 400 });
+
+    const { data: link, error: linkError } = await admin
+      .from("vehicle_media_links")
+      .select("player_media_id")
+      .eq("vehicle_id", vehicleId)
+      .eq("player_media_id", mediaId)
+      .maybeSingle();
+    if (linkError) throw new Error(linkError.message);
+    if (!link) return NextResponse.json({ error: "Imagen no encontrada." }, { status: 404 });
+
+    const { data: media, error: mediaError } = await admin
+      .from("player_media")
+      .select("id,player_id,storage_path,media_type")
+      .eq("id", mediaId)
+      .eq("player_id", access.player.id)
+      .eq("media_type", "image")
+      .maybeSingle();
+    if (mediaError) throw new Error(mediaError.message);
+    if (!media?.storage_path) return NextResponse.json({ error: "Imagen no disponible." }, { status: 404 });
+
+    const { data: blob, error: downloadError } = await admin.storage.from("vehicle-media").download(media.storage_path);
+    if (downloadError || !blob) throw new Error(downloadError?.message || "No se pudo leer la imagen.");
+    return new NextResponse(await blob.arrayBuffer(), {
+      status: 200,
+      headers: {
+        "Content-Type": blob.type || "image/png",
+        "Cache-Control": "private, max-age=300",
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "No se pudo abrir la imagen.";
+    const status = isAuthError(error) || /no autorizado/i.test(message) ? 401 : /no encontr/i.test(message) ? 404 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
+}
+
 export async function POST(request: NextRequest, context: { params: Promise<{ vehicleId: string }> }) {
   try {
     const { vehicleId } = await context.params;

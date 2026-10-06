@@ -30,6 +30,7 @@ type SaveBuildInput = {
 };
 
 type Props = {
+  vehicleId: string;
   vehicleName: string;
   modelUrl?: string | null;
   partMeshMap?: Record<string, unknown> | null;
@@ -44,6 +45,7 @@ type Props = {
 type SourceMode = "off" | "track" | "mic";
 
 export function VehicleShowStudio({
+  vehicleId,
   vehicleName,
   modelUrl,
   partMeshMap,
@@ -232,8 +234,8 @@ export function VehicleShowStudio({
   return (
     <section className="mt-3">
       <div className="rounded-[28px] border border-violet-300/15 bg-[radial-gradient(circle_at_78%_0%,rgba(119,76,255,.2),transparent_40%),#0b0912] p-5">
-        <div className="inline-flex items-center gap-2 text-violet-200"><Radio size={17} /><span className="text-[10px] font-semibold uppercase tracking-[.17em]">Show Engine</span></div>
-        <h2 className="mt-2 text-3xl font-semibold tracking-tight">El auto escucha la canción.</h2>
+        <div className="inline-flex items-center gap-2 text-violet-200"><Radio size={17} /><span className="text-[10px] font-semibold uppercase tracking-[.17em]">LOCODANISONIDO · SHOW ENGINE</span></div>
+        <h2 className="mt-2 text-3xl font-semibold tracking-tight">EL UNITO escucha la canción.</h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-white/42">
           Graves, medios y agudos mueven suspensión, cámara, luces y underglow. Para vivo podés usar una canción guardada o la entrada del micrófono.
         </p>
@@ -262,6 +264,7 @@ export function VehicleShowStudio({
 
       <div ref={stageRef} className="relative mt-4 h-[46dvh] min-h-[360px] max-h-[650px] overflow-hidden rounded-[30px] border border-white/[0.08] bg-black">
         <VehicleModelViewer
+          vehicleId={vehicleId}
           modelUrl={modelUrl}
           partMeshMap={partMeshMap}
           tuningConfig={tuning}
@@ -271,7 +274,7 @@ export function VehicleShowStudio({
           className="rounded-none"
         />
         <div className="pointer-events-none absolute left-4 top-4 rounded-2xl border border-white/10 bg-black/55 px-3 py-2 backdrop-blur-md">
-          <p className="text-[9px] uppercase tracking-[.16em] text-white/35">CLOUVA AUTO · SHOW</p>
+          <p className="text-[9px] uppercase tracking-[.16em] text-white/35">BAJOCERO-Z · LOCODANISONIDO</p>
           <p className="mt-0.5 text-xs font-semibold">{vehicleName}</p>
         </div>
         <div className="pointer-events-none absolute bottom-4 left-4 rounded-2xl border border-white/10 bg-black/55 px-3 py-2 backdrop-blur-md">
@@ -287,7 +290,7 @@ export function VehicleShowStudio({
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <article className="rounded-[26px] border border-white/[0.07] bg-[#0b0912] p-4">
-          <div className="flex items-center gap-2"><Music2 size={15} className="text-violet-300" /><p className="text-xs font-semibold">Fuente de sonido</p></div>
+          <div className="flex items-center gap-2"><Music2 size={15} className="text-violet-300" /><p className="text-xs font-semibold">LOCODANISONIDO · Fuente de sonido</p></div>
           <select value={trackId ?? ""} onChange={(event) => { setTrackId(event.target.value || null); stopAudioReactive(); }} className="mt-4 w-full rounded-xl border border-white/10 bg-[#14101c] px-3 py-3 text-sm">
             <option value="">Elegir canción…</option>
             {audioLibrary.map((track) => <option key={track.id} value={track.id}>{track.caption || "Audio sin nombre"}</option>)}
