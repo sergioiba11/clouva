@@ -139,7 +139,7 @@ function applyMeshMap(root: Object3D, map: Record<string, unknown> | null | unde
 const UNO_WHEEL_MOUNTS = {
   trackHalf: 0.70,
   rimTrackHalf: 0.725,
-  wheelY: 0.32,
+  wheelY: 0.335,
   frontZ: -1.18,
   rearZ: 1.18,
 };
@@ -174,7 +174,10 @@ function restoreNfsMountPoints(root: Object3D) {
       mounted.position.set(side * x, UNO_WHEEL_MOUNTS.wheelY, z);
       if (side > 0) mounted.scale.x *= -1;
       mounted.userData.partKey = partKey;
-      if (wheel) mounted.userData.tuningRole = "wheel";
+      if (wheel) {
+        mounted.userData.tuningRole = "wheel";
+        mounted.visible = false;
+      }
       mounted.traverse((child) => {
         child.userData.partKey = child.userData.partKey || partKey;
         if (wheel) {
@@ -700,7 +703,7 @@ const loader = new GLTFLoader();
               const wheelBox = new Box3().setFromObject(gltf.scene);
               const size = wheelBox.getSize(new Vector3());
               const radius = Math.max(size.y, size.z) / 2 || 1;
-              const baseScale = 0.285 / radius;
+              const baseScale = 0.25 / radius;
               const tireRadius = 0.31;
               const tireWidth = 0.24;
               const mounts = [
